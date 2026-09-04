@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# local runtime artifacts (audit logs regenerate per run)
+results/audit-demo.jsonl
