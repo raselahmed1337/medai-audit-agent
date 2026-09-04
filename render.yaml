@@ -1,0 +1,10 @@
+# Render Blueprint — deploy with "New +" -> "Blueprint" after pushing to a Git repo,
+# or configure manually with these values.
+services:
+  - type: web
+    name: medai-audit-agent
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    # free tier sleeps after ~15 min idle; expect a ~30-60s cold start on the next visit
