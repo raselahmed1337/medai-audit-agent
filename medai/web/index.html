@@ -398,6 +398,12 @@
         <label class="toggle" style="text-transform:none;letter-spacing:0">
           <input type="checkbox" id="live">
           <span>Live retrieval <span class="src">· PubMed + OpenAlex + arXiv + Semantic Scholar&nbsp;(+ Scopus/IEEE with API keys)</span></span>
+      </div>
+      <div class="field">
+        <label class="toggle" style="text-transform:none;letter-spacing:0">
+          <input type="checkbox" id="llm">
+          <span>LLM-enhanced reasoning <span class="src">· screening, extraction &amp; abstract writing via OpenRouter (needs OPENROUTER_API_KEY)</span></span>
+        </label>
         </label>
       </div>
       <div class="field">
@@ -503,7 +509,8 @@ async function submitRun() {
   try {
     const body = { query: $("query").value.trim() || "aspirin myocardial infarction risk",
                    live: $("live").checked,
-                   failure_rate: Number($("failureRate").value) / 100 };
+                   failure_rate: Number($("failureRate").value) / 100,
+                   llm: $("llm").checked ? {screen:true, extract:true, write:true} : null };
     const r = await api("/runs", { method:"POST",
         headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
     selected = r.run_id; curTab = "overview";
@@ -1032,6 +1039,7 @@ function renderDetail(d) {
         <div class="meta">
           ${pill(d.status)}
           <span class="mchip">${d.live ? "live retrieval" : "offline corpus"}</span>
+          ${d.llm ? `<span class="mchip" style="color:var(--accent)">LLM-enhanced</span>` : ""}
           <span class="mchip">failure sim ${Math.round(d.failure_rate * 100)}%</span>
           <span class="mchip">started ${ago(d.created)}</span>
           <span class="mchip">run ${esc(d.run_id)}</span>

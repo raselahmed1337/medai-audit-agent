@@ -95,6 +95,13 @@ def _build(paper_id: str, span: str, measure: str,
     return rec
 
 
+def build_effect(paper_id: str, span: str, measure: str,
+                 point: float, lo: float, hi: float) -> dict | None:
+    """Public constructor shared by the rule-based and LLM extraction paths:
+    validates and assembles one provenance-bound effect record (or None)."""
+    return _build(paper_id, span, measure, point, lo, hi)
+
+
 def extract_effects(paper: dict) -> list[dict]:
     """Extract effect estimates from one paper's title+abstract.
 

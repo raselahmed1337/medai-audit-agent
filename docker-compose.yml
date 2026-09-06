@@ -23,8 +23,13 @@ services:
       AUDIT_DIR: /app/audit-logs
       SCOPUS_API_KEY: ${SCOPUS_API_KEY:-}
       IEEE_API_KEY: ${IEEE_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_MODEL_CHAIN: ${LLM_MODEL_CHAIN:-}
+      LLM_CACHE_DIR: /app/llm-cache
     volumes:
       - ./audit-logs:/app/audit-logs
+      - ./llm-cache:/app/llm-cache
     ports:
       - "8000:8000"
     depends_on:

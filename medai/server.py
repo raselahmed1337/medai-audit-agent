@@ -59,6 +59,7 @@ class RunHandle:
     pending: list = field(default_factory=list)   # [{id, payload}] while paused
     state: dict = field(default_factory=dict)     # final state after completion
     error: str | None = None
+    llm: dict = field(default_factory=dict)
     created: float = field(default_factory=time.time)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -67,6 +68,7 @@ class RunRequest(BaseModel):
     query: str
     live: bool = False
     failure_rate: float = 0.0
+    llm: dict | None = None  # {"screen": bool, "extract": bool, "write": bool}
 
 
 class ApprovalBody(BaseModel):
@@ -183,7 +185,7 @@ def _advance(handle: RunHandle, resume=None) -> None:
                 if resume is None:
                     state = handle.graph.invoke(
                         {"query": handle.query, "max_results": 10, "status": "ok",
-                         "live": handle.live}, config)
+                         "live": handle.live, "llm": handle.llm}, config)
                 else:
                     state = handle.graph.invoke(Command(resume=resume), config)
             except Exception as e:  # never let a worker thread die silently
@@ -225,7 +227,7 @@ def create_run(req: RunRequest):
         checkpointer=checkpointing.get_checkpointer())
     handle = RunHandle(run_id=run_id, query=req.query, live=req.live,
                        failure_rate=req.failure_rate, graph=graph,
-                       audit=audit, tools=tools)
+                       audit=audit, tools=tools, llm=req.llm or {})
     RUNS[run_id] = handle
     checkpointing.registry_insert(run_id, req.query, req.live, req.failure_rate,
                                   handle.created)
@@ -250,6 +252,7 @@ def get_run(run_id: str):
     return {
         "run_id": h.run_id, "query": h.query, "live": h.live,
         "failure_rate": h.failure_rate, "status": h.status,
+        "llm": h.llm,
         "pending": h.pending,
         "report": h.state.get("report", ""),
         "citations": h.state.get("citations", []),

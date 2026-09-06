@@ -9,3 +9,7 @@ __pycache__/
 
 # local runtime artifacts (audit logs regenerate per run)
 results/audit-demo.jsonl
+
+# secrets
+.env
+llm-cache/

@@ -24,6 +24,9 @@ from langgraph.types import Command, Send, interrupt
 
 from medai import approvals
 from medai.audit import AuditLog
+from medai import llm
+from medai.llm_nodes import (llm_extract_effects,  # noqa: E402
+                               llm_rewrite_abstract, llm_screen_papers)
 from medai.review import build_review
 from medai.synthesis import build_synthesis
 from medai.tools.analysis import meta_analysis, valid_analysis
@@ -50,6 +53,7 @@ class ResearchState(TypedDict):
     citations: list[str]
     synthesis: dict | None
     review: dict | None
+    llm: dict | None
     prisma: dict | None
     status: str  # ok | declined | no_evidence | no_extractable_evidence | failed:<tool>
     audit_events: Annotated[list[dict], operator.add]
@@ -124,7 +128,28 @@ def _merge(state: ResearchState, tools) -> dict:
     merged_raw = merge_sources([r["papers"] for r in results if r["papers"]],
                                state.get("max_results", 10), priority=order)
     duplicates_removed = raw_total - len(merged_raw)
-    papers = screen_papers(merged_raw, infer_topic_keywords(state["query"]))
+    llm_flags = state.get("llm") or {}
+    if bool(llm_flags.get("screen")) and llm.llm_enabled():
+        try:
+            papers, llm_excluded = llm_screen_papers(
+                state["query"], merged_raw, audit=audit)
+            # sanity bound: excluding nearly everything for an on-topic query
+            # signals poor model judgment — recall is protected over the LLM's
+            # exclusion verdict, and the keyword screen takes over (audited)
+            excl_ratio = len(llm_excluded) / max(1, len(merged_raw))
+            if len(merged_raw) >= 4 and excl_ratio > 0.8:
+                audit.record("llm_fallback", node="screen",
+                             reason=f"implausible exclusion rate {excl_ratio:.0%}")
+                papers = screen_papers(merged_raw, infer_topic_keywords(state["query"]))
+            else:
+                audit.record("llm_screening", kept=len(papers), excluded=len(llm_excluded),
+                             reasons=[{"id": x["id"], "reason": x.get("exclusion_reason", "")}
+                                      for x in llm_excluded][:20])
+        except (llm.LLMError, ToolError) as e:
+            audit.record("llm_fallback", node="screen", error=str(e))
+            papers = screen_papers(merged_raw, infer_topic_keywords(state["query"]))
+    else:
+        papers = screen_papers(merged_raw, infer_topic_keywords(state["query"]))
     if not papers:
         # all sources failed or nothing matched -> corpus fallback (offline-safe)
         try:
@@ -155,11 +180,34 @@ def _extract(state: ResearchState, tools) -> dict:
     if state.get("status", "").startswith("failed"):
         return {}  # propagate upstream failure; router sends us to report_failed
     audit = tools["extract_evidence"].audit
-    try:
-        evidence = tools["extract_evidence"].call(state["papers"])
-    except ToolError as e:
-        return {"status": "failed:extract_evidence",
-                "audit_events": [audit.record("node_failure", node="extract", error=str(e))]}
+    papers = state.get("papers", [])
+    llm_flags = state.get("llm") or {}
+    use_llm = bool(llm_flags.get("extract")) and llm.llm_enabled()
+    evidence: list[dict] = []
+    fallback: list[dict] = []
+    llm_studies = 0
+    if use_llm:
+        # LLM path per paper; any failure (rate limit, invalid JSON, fabricated
+        # span, out-of-range numbers) falls back to the rule-based extractor
+        for p in papers:
+            try:
+                recs = llm_extract_effects(p, state["query"], audit=audit)
+                evidence.extend(recs)
+                llm_studies += bool(recs)
+            except (llm.LLMError, ToolError, ValueError) as e:
+                audit.record("llm_fallback", node="extract", paper=p["id"], error=str(e))
+                fallback.append(p)
+        if llm_studies:
+            audit.record("llm_extraction", studies_extracted=llm_studies,
+                         papers_fallback=len(fallback))
+    else:
+        fallback = papers
+    if fallback:
+        try:
+            evidence.extend(tools["extract_evidence"].call(fallback))
+        except ToolError as e:
+            return {"status": "failed:extract_evidence",
+                    "audit_events": [audit.record("node_failure", node="extract", error=str(e))]}
     if not evidence:
         # papers retrieved, but no parseable effect estimates: there is nothing
         # to synthesize, so the approval gate must never be reached
@@ -219,6 +267,22 @@ def _synthesize(state: ResearchState, audit: AuditLog) -> dict:
     synthesis = build_synthesis(state["query"], state.get("papers", []),
                                 state.get("evidence", []), analysis, sources_used,
                                 prisma=state.get("prisma"), created=time.time())
+    llm_flags = state.get("llm") or {}
+    if llm_flags.get("write") and llm.llm_enabled():
+        try:
+            rewritten = llm_rewrite_abstract(synthesis["abstract_sections"],
+                                             state["query"], audit=audit)
+            required = [str(analysis["pooled_point"]), str(analysis["ci_lo"]),
+                        str(analysis["ci_hi"]), f"{analysis['I2']}%"]
+            if rewritten and all(x in rewritten for x in required):
+                synthesis["abstract"] = rewritten
+                synthesis["written_by"] = "llm"
+                audit.record("llm_writer", status="accepted")
+            else:
+                audit.record("llm_fallback", node="synthesize",
+                             reason="key statistics missing from LLM draft")
+        except (llm.LLMError, ToolError) as e:
+            audit.record("llm_fallback", node="synthesize", error=str(e))
     audit.record("synthesis", abstract_chars=len(synthesis["abstract"]),
                  outline_sections=len(synthesis["outline"]),
                  top_papers=[r["id"] for r in synthesis["most_relevant"][:3]])
