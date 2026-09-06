@@ -6,7 +6,7 @@ no human approval, no citation verification.
 from __future__ import annotations
 
 from medai.audit import AuditLog
-from medai.tools.analysis import meta_analysis_fixed
+from medai.tools.analysis import meta_analysis
 from medai.tools.extraction import extract_evidence
 from medai.tools.retrieval import infer_topic_keywords, screen_papers, search_papers
 from experiments.runresult import RunResult
@@ -42,7 +42,7 @@ def run(query: str, failure_rate: float, seed: int) -> RunResult:
             _finish(res, audit)
             return res
         try:
-            analysis = meta_analysis_fixed(effects)
+            analysis = meta_analysis(effects)
             if rng.random() < failure_rate and rng.random() < 0.5:
                 analysis = dict(analysis, pooled_point=None)
         except Exception as e:
@@ -54,7 +54,7 @@ def run(query: str, failure_rate: float, seed: int) -> RunResult:
         papers = screen_papers(search_papers(query), infer_topic_keywords(query))
         audit.tool_call("search_papers", {})
         effects = extract_evidence(papers)
-        analysis = meta_analysis_fixed(effects)
+        analysis = meta_analysis(effects)
 
     res.analysis_ran = True
     res.pooled_point = analysis.get("pooled_point")

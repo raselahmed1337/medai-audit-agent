@@ -182,6 +182,54 @@
   .srcb { font-size:10.5px; font-weight:700; color:var(--accent); background:var(--accent-soft);
           padding:2px 7px; border-radius:99px; display:inline-block; margin-top:3px; }
 
+  /* paper overview */
+  ol.refs { margin:0; padding-left:22px; }
+  ol.refs li { margin-bottom:13px; font-size:13.5px; line-height:1.5; }
+  ol.refs li a { color:var(--accent); text-decoration:none; font-weight:650; }
+  ol.refs li a:hover { text-decoration:underline; }
+  .eff { color:var(--accent); font-size:12.5px; font-weight:650; margin-top:3px; }
+  .noeff { color:var(--muted); font-size:12px; margin-top:3px; font-style:italic; }
+  .snippet { color:var(--muted); font-size:12px; margin-top:3px; line-height:1.5; }
+  .cite-n { font-weight:750; color:var(--accent); font-size:12px; }
+  .outline-h { font-weight:700; font-size:13.5px; margin:12px 0 5px; }
+  .outline-b { margin:0 0 5px; font-size:13.5px; line-height:1.55; color:var(--ink); }
+  .outline-b .cite-n { cursor:default; }
+  .abstract-p { font-size:14px; line-height:1.7; }
+
+  /* review article */
+  .review-title { font-size:19px; font-weight:750; letter-spacing:-.02em; line-height:1.35;
+                  margin:0 0 6px; }
+  .review-meta { font-size:12px; color:var(--muted); margin-bottom:12px; }
+  .review-sec { font-weight:750; font-size:13px; text-transform:uppercase; letter-spacing:.07em;
+                color:var(--accent); margin:16px 0 6px; }
+  .review-sub { font-weight:700; font-size:13px; margin:10px 0 3px; }
+  .review-p { font-size:13.5px; line-height:1.65; margin:0 0 6px; }
+  .review-li { font-size:13.5px; line-height:1.6; margin:0 0 4px; }
+  .flow-box { fill:var(--panel-2); stroke:var(--accent); stroke-width:1.2; rx:8; }
+  .flow-side { fill:var(--bad-bg); stroke:var(--bad); stroke-width:1; }
+  .flow-text { font-size:12px; fill:var(--ink); font-weight:600; }
+  .flow-sub { font-size:11px; fill:var(--muted); }
+  .flow-arrow { stroke:var(--muted); stroke-width:1.4; }
+  .flow-excl { font-size:11px; fill:var(--bad); font-weight:600; }
+
+  /* forest plot */
+  .forest-wrap { overflow-x:auto; }
+  .forest-plot text { font-family:inherit; }
+  .forest-plot .study-label { font-size:12px; fill:var(--ink); }
+  .forest-plot .val-label { font-size:11.5px; fill:var(--muted); font-variant-numeric:tabular-nums; }
+  .forest-plot .pooled-label { font-size:12px; font-weight:750; fill:var(--ink); }
+  .forest-plot .axis-label { font-size:11px; fill:var(--muted); font-variant-numeric:tabular-nums; }
+  .forest-plot .axis-caption { font-size:11px; fill:var(--muted); font-style:italic; }
+  .forest-plot .ci-line { stroke:var(--accent); stroke-width:1.6; }
+  .forest-plot .study-marker { fill:var(--accent); stroke:var(--panel); stroke-width:1; }
+  .forest-plot .ref-line { stroke:var(--muted); stroke-width:1; stroke-dasharray:4 4; opacity:.7; }
+  .forest-plot .pooled-diamond { fill:var(--accent); opacity:.92; }
+  .forest-plot .fixed-diamond { fill:none; stroke:var(--muted); stroke-width:1.4; stroke-dasharray:3 2; }
+  .forest-plot .pooled-row-line { stroke:var(--line); stroke-width:1; }
+  .forest-header { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+  a.plink { color:var(--accent); text-decoration:none; font-weight:650; }
+  a.plink:hover { text-decoration:underline; }
+
   .badge { font-size:12px; font-weight:750; padding:4px 11px; border-radius:99px; display:inline-block; }
   .badge.ok { background:var(--ok-bg); color:var(--ok); }
   .badge.bad { background:var(--bad-bg); color:var(--bad); }
@@ -197,6 +245,134 @@
   .toast.show { opacity:1; transform:none; }
   .hint { font-size:12.5px; color:var(--muted); line-height:1.65; }
   .hint b { color:var(--ink); }
+</style>
+<style>
+  /* ============ aurora-glass design layer ============ */
+  :root {
+    --bg:#eef1f8;
+    --panel:rgba(255,255,255,.66);
+    --panel-2:rgba(244,246,252,.8);
+    --ink:#0a1220; --muted:#5c6c80;
+    --line:rgba(13,32,56,.1);
+    --accent:#0891b2; --accent-2:#6366f1;
+    --accent-soft:rgba(8,145,178,.1);
+    --ok:#059669; --ok-bg:rgba(5,150,105,.1);
+    --warn:#c2620a; --warn-bg:rgba(217,119,6,.1);
+    --bad:#dc2626; --bad-bg:rgba(220,38,38,.08);
+    --radius:18px;
+    --shadow:0 1px 2px rgba(2,10,26,.05), 0 16px 40px -12px rgba(2,10,26,.14);
+    --glass-blur:blur(18px) saturate(1.35);
+  }
+  [data-theme="dark"] {
+    --bg:#060a13;
+    --panel:rgba(15,24,39,.62);
+    --panel-2:rgba(20,31,48,.55);
+    --ink:#e9f0f9; --muted:#8b9fb5;
+    --line:rgba(148,170,200,.14);
+    --accent:#22d3ee; --accent-2:#818cf8;
+    --accent-soft:rgba(34,211,238,.1);
+    --ok:#34d399; --ok-bg:rgba(52,211,153,.1);
+    --warn:#fbbf24; --warn-bg:rgba(251,191,36,.09);
+    --bad:#f87171; --bad-bg:rgba(248,113,113,.09);
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 20px 48px -16px rgba(0,0,0,.55);
+  }
+  /* ambient aurora washes behind the whole app */
+  body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(48rem 30rem at 82% -12%, var(--accent-soft), transparent 65%),
+      radial-gradient(42rem 28rem at -8% 108%, rgba(99,102,241,.09), transparent 62%);
+  }
+  [data-theme="dark"] body::before {
+    background:
+      radial-gradient(50rem 32rem at 84% -14%, rgba(34,211,238,.09), transparent 64%),
+      radial-gradient(44rem 30rem at -10% 110%, rgba(129,140,248,.08), transparent 62%);
+  }
+  .app { position:relative; z-index:1; }
+  ::selection { background:var(--accent-soft); }
+  ::-webkit-scrollbar { width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb { background:var(--line); border-radius:99px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:8px; }
+
+  /* glass panels */
+  aside, .card { background:var(--panel); backdrop-filter:var(--glass-blur);
+    -webkit-backdrop-filter:var(--glass-blur); border:1px solid var(--line); }
+  aside { border-right:1px solid var(--line); }
+  .card { border-radius:var(--radius); box-shadow:var(--shadow);
+          transition:border-color .2s ease, box-shadow .2s ease; }
+
+  .logo { background:linear-gradient(135deg, var(--accent), var(--accent-2));
+          box-shadow:0 6px 18px -6px var(--accent); }
+  .brand h1 { letter-spacing:-.02em; }
+
+  /* buttons */
+  .btn { transition:transform .16s ease, filter .16s ease, box-shadow .16s ease; }
+  .btn:hover { transform:translateY(-1px); }
+  .btn:active { transform:translateY(0); }
+  .btn-primary { background:linear-gradient(135deg, var(--accent), var(--accent-2));
+                 border:0; color:#fff; box-shadow:0 8px 20px -8px var(--accent); }
+  [data-theme="dark"] .btn-primary { color:#06121a; }
+  .btn-ok { box-shadow:0 8px 20px -8px var(--ok); }
+  .btn-bad { background:transparent; }
+  .btn-bad:hover { background:var(--bad-bg); transform:translateY(-1px); }
+
+  /* run list */
+  .runlist li { transition:background .15s ease, border-color .15s ease, transform .15s ease; }
+  .runlist li:hover { transform:translateX(2px); }
+  .runlist li.sel { box-shadow:inset 0 0 0 1px var(--accent); }
+
+  /* status pills — soft translucent with ring */
+  .pill { backdrop-filter:blur(6px); box-shadow:inset 0 0 0 1px var(--line); }
+
+  /* stepper — gradient nodes, glowing active */
+  .step .node { background:var(--panel-2); border:2px solid var(--line);
+                transition:all .25s ease; }
+  .step.done .node { background:linear-gradient(135deg, var(--ok), #0ea5a0); border-color:transparent;
+                     box-shadow:0 4px 14px -4px var(--ok); }
+  .step.done::before, .step.act::before { background:linear-gradient(90deg, var(--ok), var(--accent)); }
+  .step.act .node { border-color:var(--accent); color:var(--accent);
+                    background:var(--accent-soft); box-shadow:0 0 0 5px var(--accent-soft); }
+  .step.fail .node { background:linear-gradient(135deg, var(--bad), #ef4444); border-color:transparent;
+                     box-shadow:0 4px 14px -4px var(--bad); }
+  .step.fail::before { background:linear-gradient(90deg, var(--bad), var(--bad-bg)); }
+  .step .lbl { letter-spacing:.08em; }
+
+  /* approval card — attention gradient */
+  .approval { border:1.5px solid var(--warn);
+    background:linear-gradient(160deg, var(--warn-bg), transparent 60%), var(--panel);
+    box-shadow:0 0 0 4px var(--warn-bg), var(--shadow); }
+
+  /* tabs */
+  .tabs { background:var(--panel-2); backdrop-filter:blur(8px); }
+  .tab { transition:color .15s ease, background .15s ease; }
+  .tab.on { box-shadow:0 2px 10px -2px rgba(2,10,26,.25); }
+
+  /* tables */
+  table { font-variant-numeric:tabular-nums; }
+  tbody tr, table tr:not(:first-child) { transition:background .12s ease; }
+  table tr:hover td { background:color-mix(in srgb, var(--accent-soft) 40%, transparent); }
+
+  /* chips & badges */
+  .mchip, .fchip, .cites a { backdrop-filter:blur(6px); }
+  .cites a { transition:transform .15s ease, filter .15s ease; }
+  .cites a:hover { transform:translateY(-1px); filter:brightness(1.05); }
+
+  /* filters */
+  .fchip { transition:all .15s ease; }
+  .fchip.on { box-shadow:0 4px 12px -6px var(--accent); }
+
+  /* toast */
+  .toast { background:linear-gradient(135deg, var(--ink), #1e293b); color:var(--bg);
+           border:1px solid var(--line); }
+
+  /* headings */
+  .topbar h2 { letter-spacing:-.025em; }
+  .card h3 { letter-spacing:.09em; }
+  .abstract-p, .report { letter-spacing:-.005em; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation:none !important; transition:none !important; }
+  }
 </style>
 </head>
 <body>
@@ -221,7 +397,7 @@
       <div class="field">
         <label class="toggle" style="text-transform:none;letter-spacing:0">
           <input type="checkbox" id="live">
-          <span>Live retrieval <span class="src">· PubMed + OpenAlex + Semantic Scholar</span></span>
+          <span>Live retrieval <span class="src">· PubMed + OpenAlex + arXiv + Semantic Scholar&nbsp;(+ Scopus/IEEE with API keys)</span></span>
         </label>
       </div>
       <div class="field">
@@ -305,8 +481,21 @@ function citeLink(id) {
   if (id.startsWith("PMID:")) return `https://pubmed.ncbi.nlm.nih.gov/${id.slice(5)}/`;
   if (id.startsWith("DOI:"))  return `https://doi.org/${id.slice(4)}`;
   if (id.startsWith("OAW:"))  return `https://openalex.org/${id.slice(4)}`;
+  if (id.startsWith("ARXIV:")) return `https://arxiv.org/abs/${id.slice(6)}`;
+  if (id.startsWith("IEEE:"))  return `https://ieeexplore.ieee.org/document/${id.slice(5)}`;
+  if (id.startsWith("SCOPUS:")) return `https://www.scopus.com/record/display.uri?origin=inward&documentId=${id.slice(7)}`;
   if (id.startsWith("S2:"))   return `https://www.semanticscholar.org/paper/${id.slice(3)}`;
   return null;
+}
+function paperLink(id, text) {
+  const href = citeLink(id);
+  return href ? `<a class="plink" href="${href}" target="_blank" rel="noopener">${esc(text)}</a>`
+              : `<span>${esc(text)}</span>`;
+}
+function fmtEffect(e) {
+  const label = {hr:"HR", or:"OR", rr:"RR", md:"MD"}[e.measure] || String(e.measure).toUpperCase();
+  const f = v => Math.round(v * 1000) / 1000;
+  return `${label} ${f(e.point)} (95% CI ${f(e.lo)} to ${f(e.hi)})`;
 }
 
 /* ---------- actions ---------- */
@@ -429,6 +618,315 @@ function stages(d) {
   return st;
 }
 
+function linkifyRefs(text, papers) {
+  // turn [n] markers into links pointing at the referenced paper
+  return esc(text).replace(/\[(\d+)\]/g, (m, n) => {
+    const p = papers[Number(n) - 1];
+    const href = p ? citeLink(p.id) : null;
+    return href ? `<a class="plink" href="${href}" target="_blank" rel="noopener">[${n}]</a>`
+                : `<span class="cite-n">[${n}]</span>`;
+  });
+}
+
+function synthesisCards(d) {
+  if (!d.synthesis) return "";
+  const s = d.synthesis;
+  let html;
+  if (s.abstract_sections) {
+    html = `<div class="card"><h3>Combined abstract — all papers synthesized (structured)</h3>` +
+      s.abstract_sections.map(sec =>
+        `<div class="review-sub">${esc(sec.label)}</div>` +
+        `<p class="review-p">${linkifyRefs(sec.text, d.papers)}</p>`).join("") + `</div>`;
+  } else {
+    html = `<div class="card"><h3>Combined abstract — all papers synthesized</h3>
+      <p class="abstract-p">${linkifyRefs(s.abstract, d.papers)}</p></div>`;
+  }
+  if (s.outline && s.outline.length) {
+    html += `<div class="card"><h3>Agent-generated review outline</h3>` +
+      s.outline.map(sec => `<div class="outline-h">${esc(sec.heading)}</div>` +
+        sec.bullets.map(b => `<div class="outline-b">• ${linkifyRefs(b, d.papers)}</div>`).join("")
+      ).join("") + `</div>`;
+  }
+  return html;
+}
+
+function forestCard(d) {
+  const a = d.analysis;
+  if (!a || !d.evidence || !d.evidence.length) return "";
+  const ratio = a.effect_measure === "ratio";
+  const nullVal = ratio ? 1 : 0;
+  const tf = v => ratio ? Math.log(v) : v;   // to analysis scale
+  const fb = v => ratio ? Math.exp(v) : v;   // back to display scale
+  const f3 = v => Math.round(v * 1000) / 1000;
+
+  const rows = d.evidence.map(e => {
+    const se = ratio ? (Math.log(e.hi) - Math.log(e.lo)) / 3.92 : (e.hi - e.lo) / 3.92;
+    const idx = d.papers.findIndex(p => p.id === e.paper_id);
+    return { ...e, disp: { point: e.point, lo: e.lo, hi: e.hi },
+             y: tf(e.point), lo: tf(e.lo), hi: tf(e.hi), w: 1 / (se * se),
+             ref: idx + 1,
+             title: (d.papers[idx] || {}).title || e.paper_id };
+  });
+  const wsum = rows.reduce((s, r) => s + r.w, 0);
+  rows.forEach(r => r.wpct = Math.max(1, Math.round(100 * r.w / wsum)));
+
+  const pooled = { y: tf(a.pooled_point), lo: tf(a.ci_lo), hi: tf(a.ci_hi),
+                   label: `Pooled (${a.model})`, cls: "pooled-diamond" };
+  const fixed = a.fixed_effect ? { y: tf(a.fixed_effect.point), lo: tf(a.fixed_effect.ci[0]),
+                                   hi: tf(a.fixed_effect.ci[1]), label: "Pooled (fixed-effect)",
+                                   cls: "fixed-diamond" } : null;
+  const diamonds = a.model === "random-effects" && fixed ? [fixed, pooled] : [pooled];
+
+  let dLo = Math.min(...rows.map(r => r.lo), ...diamonds.map(x => x.lo), tf(nullVal));
+  let dHi = Math.max(...rows.map(r => r.hi), ...diamonds.map(x => x.hi), tf(nullVal));
+  const pad = (dHi - dLo) * 0.08 || 0.1; dLo -= pad; dHi += pad;
+
+  // ticks: nice ratio values in natural-log space (ratios) or even steps (MDs)
+  const ticks = new Set([tf(nullVal)]);
+  if (ratio) {
+    const NICE = [0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 1, 1.5, 2, 3, 5, 7, 10, 20, 50, 100];
+    let cands = NICE.map(v => ({ v, e: Math.log(v) }))
+                    .filter(t => t.e >= dLo && t.e <= dHi)
+                    .map(t => t.e);
+    while (cands.length > 7) cands = cands.filter((_, i) => i % 2 === 0);
+    for (const e of cands) ticks.add(e);
+  } else {
+    const step = (dHi - dLo) / 6;
+    for (let v = dLo; v <= dHi; v += step) ticks.add(v);
+  }
+
+  const W = 780, labelW = 240, valW = 168, rowH = 30;
+  const totalRows = rows.length + diamonds.length;
+  const H = 40 + rowH * totalRows + 34;
+  const X = v => labelW + ((v - dLo) / (dHi - dLo)) * (W - labelW - valW);
+  let y = 34;
+  let svg = `<svg class="forest-plot" viewBox="0 0 ${W} ${H}" width="100%" style="min-width:640px">`;
+  // null reference line
+  svg += `<line class="ref-line" x1="${X(tf(nullVal))}" y1="22" x2="${X(tf(nullVal))}" y2="${H - 30}"/>`;
+  // axis tick labels
+  for (const t of [...ticks].sort((p, q) => p - q)) {
+    const lbl = ratio ? f3(fb(t)) : f3(t);
+    svg += `<text class="axis-label" x="${X(t)}" y="${H - 12}" text-anchor="middle">${lbl}</text>`;
+  }
+  svg += `<text class="axis-caption" x="${X((dLo + dHi) / 2)}" y="${H}" text-anchor="middle">${ratio ? "effect size (log scale)" : "effect size"} — dashed line = no effect</text>`;
+
+  const trunc = s => s.length > 34 ? s.slice(0, 33) + "…" : s;
+  for (const r of rows) {
+    svg += `<text class="study-label" x="${labelW - 12}" y="${y}" text-anchor="end">[${r.ref}] ${esc(trunc(r.title))}</text>`;
+    svg += `<line class="ci-line" x1="${X(r.lo)}" y1="${y - 4}" x2="${X(r.hi)}" y2="${y - 4}"/>`;
+    svg += `<rect class="study-marker" x="${X(r.y) - 4}" y="${y - 8}" width="8" height="8" rx="1.5"/>`;
+    svg += `<text class="val-label" x="${labelW + (W - labelW - valW) + 12}" y="${y}">${f3(r.disp.point)} [${f3(r.disp.lo)}, ${f3(r.disp.hi)}] · ${r.wpct}%</text>`;
+    y += rowH;
+  }
+  y += 4;
+  svg += `<line class="pooled-row-line" x1="8" y1="${y - 12}" x2="${W - 8}" y2="${y - 12}"/>`;
+  for (const dm of diamonds) {
+    const cx = X(dm.y), xl = X(dm.lo), xh = X(dm.hi), h = 9;
+    svg += `<polygon class="${dm.cls}" points="${xl},${y - 4} ${cx},${y - 4 - h} ${xh},${y - 4} ${cx},${y - 4 + h}"/>`;
+    svg += `<text class="pooled-label" x="${labelW - 12}" y="${y}" text-anchor="end">${dm.label}</text>`;
+    svg += `<text class="val-label" x="${labelW + (W - labelW - valW) + 12}" y="${y}" style="font-weight:700;fill:var(--ink)">${f3(fb(dm.y))} [${f3(fb(dm.lo))}, ${f3(fb(dm.hi))}]</text>`;
+    y += rowH;
+  }
+  svg += `</svg>`;
+
+  const header = `<div class="forest-header">
+      <span class="mchip">${ratio ? "ratio measures · log scale" : "mean differences · linear scale"}</span>
+      <span class="mchip">I² = ${a.I2}%</span>
+      <span class="mchip">model: ${esc(a.model)}</span>
+      <span class="mchip">marker size ∝ study weight</span>
+    </div>`;
+  return `<div class="card"><h3>Forest plot — ${rows.length} study effect estimates</h3>
+    ${header}<div class="forest-wrap">${svg}</div></div>`;
+}
+
+function prismaFlowSVG(f) {
+  // PRISMA 2020-style flow: main column (x 20..400) + exclusion side column
+  // (x 460..690). Heights are computed from content so nothing overlaps.
+  const mainX = 20, mainW = 380, sideX = 455, sideW = 250;
+  const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+  const P = [];
+  let yy = 10;
+
+  // row 1: identification (+ "not retrieved" side box when a source failed)
+  const idLines = chunk(f.identified.map(x => `${x.database}: ${x.n}`), 3);
+  const hId = 34 + idLines.length * 15;
+  P.push(`<rect class="flow-box" x="${mainX}" y="${yy}" width="${mainW}" height="${hId}" rx="9"/>`);
+  P.push(`<text class="flow-text" x="${mainX + 14}" y="${yy + 20}">Records identified (n = ${f.identified.reduce((s, x) => s + x.n, 0)})</text>`);
+  idLines.forEach((ln, i) =>
+    P.push(`<text class="flow-sub" x="${mainX + 14}" y="${yy + 37 + i * 15}">${esc(ln.join("  ·  "))}</text>`));
+  if (f.unavailable.length) {
+    const unl = chunk(f.unavailable, 2);
+    const hU = 34 + unl.length * 15;
+    P.push(`<line class="flow-arrow" x1="${mainX + mainW}" y1="${yy + hId / 2}" x2="${sideX}" y2="${yy + hId / 2}" stroke-dasharray="3 3"/>`);
+    P.push(`<rect class="flow-side" x="${sideX}" y="${yy}" width="${sideW}" height="${hU}" rx="9"/>`);
+    P.push(`<text class="flow-excl" x="${sideX + 12}" y="${yy + 20}">Not retrieved</text>`);
+    unl.forEach((ln, i) =>
+      P.push(`<text class="flow-sub" x="${sideX + 12}" y="${yy + 37 + i * 15}">${esc(ln.join(", "))}</text>`));
+  }
+  yy += hId;
+
+  // rows with optional exclusion side boxes
+  const row = (title, sub, side) => {
+    yy += 36;
+    P.push(`<line class="flow-arrow" x1="${mainX + mainW / 2}" y1="${yy - 32}" x2="${mainX + mainW / 2}" y2="${yy}"/>`);
+    const h = sub ? 52 : 40;
+    P.push(`<rect class="flow-box" x="${mainX}" y="${yy}" width="${mainW}" height="${h}" rx="9"/>`);
+    P.push(`<text class="flow-text" x="${mainX + 14}" y="${yy + 21}">${esc(title)}</text>`);
+    if (sub) P.push(`<text class="flow-sub" x="${mainX + 14}" y="${yy + 39}">${esc(sub)}</text>`);
+    if (side) {
+      P.push(`<line class="flow-arrow" x1="${mainX + mainW}" y1="${yy + h / 2}" x2="${sideX}" y2="${yy + h / 2}" stroke-dasharray="3 3"/>`);
+      P.push(`<rect class="flow-side" x="${sideX}" y="${yy}" width="${sideW}" height="${h}" rx="9"/>`);
+      P.push(`<text class="flow-excl" x="${sideX + 12}" y="${yy + 21}">${esc(side[0])}</text>`);
+      if (side[1]) P.push(`<text class="flow-sub" x="${sideX + 12}" y="${yy + 39}">${esc(side[1])}</text>`);
+    }
+    yy += h;
+  };
+
+  row("Records after duplicates removed", `n = ${f.screened}  ·  ${f.duplicates_removed} duplicates removed`);
+  row("Records screened", null, ["Excluded by relevance screen", `n = ${f.excluded}`]);
+  row("Studies included in review",
+      `${f.included} studies · ${f.effect_estimates} effect estimates from ${f.with_effects} papers`);
+
+  return `<svg viewBox="0 0 720 ${yy + 12}" width="100%" style="max-width:680px">${P.join("")}</svg>`;
+}
+
+function reviewCard(d) {
+  const r = d.review;
+  if (!r) return "";
+  const f = r.prisma;
+  const mdBtn = `<button class="btn" style="padding:5px 12px;font-size:12px"
+      onclick="downloadReview()">download .md manuscript</button>`;
+
+  const methodsHtml = `<div class="review-sec">Methods</div>` +
+    `<div class="review-sub">Search strategy (executed ${esc(r.generated_at)})</div>` +
+    r.methods.search_strategy.map(m => `<div class="review-li"><b>${esc(m.database)}:</b> <code>${esc(m.query)}</code></div>`).join("") +
+    `<div class="review-sub">Eligibility criteria</div>` +
+    r.methods.eligibility.map(x => `<div class="review-li">• ${esc(x)}</div>`).join("") +
+    `<div class="review-sub">Data extraction</div><div class="review-p">${esc(r.methods.extraction)}</div>` +
+    `<div class="review-sub">Synthesis</div><div class="review-p">${esc(r.methods.synthesis)}</div>`;
+
+  const resultsHtml = `<div class="review-sec">Results</div>` +
+    `<div class="review-sub">Study characteristics</div>` +
+    `<table>${r.results.study_characteristics.map(c => {
+      const href = citeLink(c.id);
+      const link = href ? `<a class="plink" href="${href}" target="_blank" rel="noopener">${esc(c.id)}</a>` : esc(c.id);
+      return `<tr><td class="k">[${c.n}] ${link}<br><span class="srcb">${esc(c.source)}</span></td>
+        <td>${esc(c.title)}${c.effect ? `<div class="eff">Extracted: ${esc(c.effect)}</div>` : ""}</td></tr>`;
+    }).join("")}</table>` +
+    (r.results.synthesis
+      ? `<div class="review-sub">Quantitative synthesis</div>
+         <div class="review-p">Pooled estimate ${esc(String(r.results.synthesis.pooled_point))}
+         (95% CI ${esc(String(r.results.synthesis.ci_lo))} to ${esc(String(r.results.synthesis.ci_hi))}),
+         ${esc(r.results.synthesis.model)} model, k=${esc(String(r.results.synthesis.k))},
+         I²=${esc(String(r.results.synthesis.I2))}%, τ²=${esc(String(r.results.synthesis.tau2))}.
+         A fixed-effect sensitivity anchor is reported in the forest plot.</div>`
+      : `<div class="review-p">${esc(r.results.narrative)}</div>`);
+
+  const refsHtml = `<div class="review-sec">References</div>` +
+    `<ol class="refs">` + r.references.map(x => {
+      const href = citeLink(x.id);
+      const link = href ? `<a class="plink" href="${href}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title);
+      return `<li>${link} <span class="srcb">${esc(x.source)}</span> <span class="cite-n">${esc(x.id)}</span></li>`;
+    }).join("") + `</ol>`;
+
+  return `<div class="card">
+    <p class="review-title">${esc(r.title)}</p>
+    <div class="review-meta">Generated ${esc(r.generated_at)} · automated rapid review, human-approved synthesis · ${mdBtn}</div>
+    <div class="review-sec">Structured abstract</div>
+    <div class="review-sub">Background</div><div class="review-p">${esc(r.abstract.background)}</div>
+    <div class="review-sub">Objective</div><div class="review-p">${esc(r.abstract.objective || "")}</div>
+    <div class="review-sub">Methods</div><div class="review-p">${esc(r.abstract.methods)}</div>
+    <div class="review-sub">Results</div><div class="review-p">${esc(r.abstract.results)}</div>
+    <div class="review-sub">Conclusions</div><div class="review-p">${esc(r.abstract.conclusions)}</div>
+    <div class="review-sec">PRISMA flow</div>
+    <div class="forest-wrap">${prismaFlowSVG(f)}</div>
+    ${methodsHtml}
+    ${resultsHtml}
+    <div class="review-sec">Discussion</div>
+    ${r.discussion.map(x => `<div class="review-p">• ${esc(x)}</div>`).join("")}
+    <div class="review-sec">Limitations</div>
+    ${r.limitations.map(x => `<div class="review-li">• ${esc(x)}</div>`).join("")}
+    <div class="review-sec">Conclusion</div>
+    <div class="review-p">${esc(r.conclusion)}</div>
+    ${refsHtml}
+  </div>`;
+}
+
+function downloadReview() {
+  const r = lastDetail && lastDetail.review;
+  if (!r) return;
+  const L = [];
+  L.push("# " + r.title, "", "*" + r.generated_at + "* — automated rapid review, human-approved synthesis.", "");
+  L.push("## Structured abstract", "", "**Background.** " + r.abstract.background,
+         "", "**Objective.** " + (r.abstract.objective || ""),
+         "", "**Methods.** " + r.abstract.methods, "",
+         "**Results.** " + r.abstract.results, "", "**Conclusions.** " + r.abstract.conclusions, "");
+  L.push("## PRISMA flow", "", "```", "Identified: " +
+         r.prisma.identified.map(x => x.database + " " + x.n).join(" | ") +
+         (r.prisma.unavailable.length ? "  (unavailable: " + r.prisma.unavailable.join(", ") + ")" : ""),
+         "After duplicates removed: " + r.prisma.screened + " (" + r.prisma.duplicates_removed + " duplicates)",
+         "Screened: " + r.prisma.screened + "  -> excluded: " + r.prisma.excluded,
+         "Included in review: " + r.prisma.included +
+         "  (" + r.prisma.effect_estimates + " effect estimates from " + r.prisma.with_effects + " studies)", "```", "");
+  L.push("## Methods", "", "### Search strategy");
+  r.methods.search_strategy.forEach(m => L.push("- **" + m.database + ":** `" + m.query + "`"));
+  L.push("", "### Eligibility criteria");
+  r.methods.eligibility.forEach(x => L.push("- " + x));
+  L.push("", "### Data extraction", r.methods.extraction, "", "### Synthesis", r.methods.synthesis, "");
+  L.push("## Results", "", "### Study characteristics", "",
+         "| Ref | ID | Source | Title | Extracted effect |", "|---|---|---|---|---|");
+  r.results.study_characteristics.forEach(c =>
+    L.push("| [" + c.n + "] | " + c.id + " | " + c.source + " | " + c.title + " | " + (c.effect || "—") + " |"));
+  if (r.results.synthesis) {
+    const s = r.results.synthesis;
+    L.push("", "### Quantitative synthesis", "",
+      "Pooled estimate **" + s.pooled_point + "** (95% CI " + s.ci_lo + " to " + s.ci_hi +
+      "), " + s.model + " model, k=" + s.k + ", I²=" + s.I2 + "%, τ²=" + s.tau2 + ".");
+  } else if (r.results.narrative) {
+    L.push("", "### Synthesis", "", r.results.narrative);
+  }
+  L.push("", "## Discussion");
+  r.discussion.forEach(x => L.push("- " + x));
+  L.push("", "## Limitations");
+  r.limitations.forEach(x => L.push("- " + x));
+  L.push("", "## Conclusion", "", r.conclusion, "", "## References");
+  r.references.forEach(x => L.push("[" + x.n + "] " + x.title + " — " + x.source + " (" + x.id + ")"));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([L.join("\n")], {type:"text/markdown"}));
+  a.download = "review-" + (lastDetail ? lastDetail.run_id : "run") + ".md";
+  a.click();
+}
+
+function overviewCard(d) {
+  if (!d.papers || !d.papers.length) return "";
+  const byPaper = {};
+  (d.evidence || []).forEach(e => (byPaper[e.paper_id] ||= []).push(e));
+  const contributed = d.papers.map((p, i) => byPaper[p.id] ? i + 1 : null).filter(x => x);
+  const srcList = [...new Set(d.papers.map(p => p.source))].join(" + ");
+  let lead = `This run retrieved <b>${d.papers.length}</b> papers via ${esc(srcList)}. `;
+  if ((d.evidence || []).length) {
+    lead += `<b>${d.evidence.length}</b> effect estimates were extracted from ` +
+            `${Object.keys(byPaper).length} of them`;
+    if (d.status === "ok" && d.citations.length) lead += `; pooling them produced the result above`;
+    lead += `. Contributing references: ` +
+            contributed.map(n => `<span class="cite-n">[${n}]</span>`).join(" ") + `.`;
+  } else {
+    lead += `None of their abstracts reported a poolable effect estimate (see outcome above).`;
+  }
+  const items = d.papers.map((p, i) => {
+    const effs = (byPaper[p.id] || []).map(fmtEffect).join("  ·  ");
+    const href = citeLink(p.id);
+    return `<li>
+      ${paperLink(p.id, p.title || p.id)} <span class="srcb">${esc(p.source)}</span> <span class="cite-n">[${i + 1}]</span>
+      ${effs ? `<div class="eff">Extracted: ${esc(effs)}</div>`
+             : `<div class="noeff">no poolable effect estimate in the abstract</div>`}
+      ${p.abstract_snippet ? `<div class="snippet">“${esc(p.abstract_snippet)}…” ${href ? `<a class="plink" href="${href}" target="_blank" rel="noopener">read →</a>` : ""}</div>` : ""}
+    </li>`;
+  }).join("");
+  return `<div class="card"><h3>Paper-by-paper breakdown — all ${d.papers.length} retrieved papers</h3>
+    <p class="report">${lead}</p><ol class="refs">${items}</ol></div>`;
+}
+
 function renderDetail(d) {
   const el = $("detail");
   const prevApprover = document.getElementById("approverName")?.value;  // survives poll re-render
@@ -488,21 +986,28 @@ function renderDetail(d) {
       <div><h3>Working…</h3>retrieving and extracting evidence</div></div></div>`;
   }
 
+  const hasForest = (d.evidence || []).length > 0 && !!d.analysis;
+  let viewTab = (curTab === "forest" && !hasForest) ? "overview" : curTab;
+  if (viewTab === "review" && !d.review) viewTab = "overview";
+  const tabDefs = [["overview", "Overview"]];
+  if (hasForest) tabDefs.push(["forest", `Forest plot (${d.evidence.length})`]);
+  tabDefs.push(["papers", `Papers (${d.papers.length})`], ["audit", `Audit log (${d.events.length})`]);
+  if (d.review) tabDefs.splice(hasForest ? 2 : 1, 0, ["review", "Review article"]);
   const tabs = `
     <div class="tabs">
-      ${["overview","papers","audit"].map(t =>
-        `<button class="tab ${curTab === t ? "on" : ""}" onclick="setTab('${t}')">
-          ${t === "papers" ? `Papers${d.papers.length ? ` (${d.papers.length})` : ""}`
-                           : t === "audit" ? `Audit log (${d.events.length})` : "Overview"}
-        </button>`).join("")}
+      ${tabDefs.map(([t, label]) =>
+        `<button class="tab ${viewTab === t ? "on" : ""}" onclick="setTab('${t}')">${label}</button>`).join("")}
     </div>`;
 
   let tabBody = "";
   if (curTab === "papers") {
     tabBody = d.papers.length ? `<div class="card"><table>
-      <tr><th>ID</th><th>Title</th></tr>
-      ${d.papers.map(p => `<tr><td class="k">${esc(p.id)}<br><span class="srcb">${esc(p.source)}</span></td>
-        <td>${esc(p.title)}</td></tr>`).join("")}</table></div>`
+      <tr><th style="width:230px">Paper (click to read)</th><th>Title & abstract</th></tr>
+      ${d.papers.map(p => `<tr>
+        <td class="k">${paperLink(p.id, p.id)}<br><span class="srcb">${esc(p.source)}</span></td>
+        <td>${paperLink(p.id, p.title || p.id)}
+            ${p.abstract_snippet ? `<div class="snippet">“${esc(p.abstract_snippet)}…”</div>` : ""}</td></tr>`).join("")}
+      </table></div>`
       : `<div class="card"><div class="hint">No paper list recorded for this run yet.</div></div>`;
   } else if (curTab === "audit") {
     tabBody = `<div class="card">
@@ -537,7 +1042,9 @@ function renderDetail(d) {
               onclick="delClick(event,'${d.run_id}')">${confirmDel && confirmDel.id === d.run_id && Date.now() - confirmDel.at < 4000 ? "Confirm delete?" : TRASH + "Delete run"}</button>
     </div>
     ${stepper}
-    ${curTab === "overview" ? body : ""}
+    ${viewTab === "overview" ? body + synthesisCards(d) + overviewCard(d) : ""}
+    ${viewTab === "forest" ? forestCard(d) : ""}
+    ${viewTab === "review" ? reviewCard(d) : ""}
     ${tabs}
     ${tabBody}`;
   const inp = document.getElementById("approverName");

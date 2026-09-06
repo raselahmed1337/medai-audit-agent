@@ -1,0 +1,36 @@
+# Long-term deployment: durable app + Postgres, survives crashes and reboots.
+#   docker compose up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: medai
+      POSTGRES_PASSWORD: medai
+      POSTGRES_DB: medai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medai"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://medai:medai@db:5432/medai
+      AUDIT_DIR: /app/audit-logs
+      SCOPUS_API_KEY: ${SCOPUS_API_KEY:-}
+      IEEE_API_KEY: ${IEEE_API_KEY:-}
+    volumes:
+      - ./audit-logs:/app/audit-logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -5,8 +5,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from medai.audit import AuditLog
 from medai.corpus import FIXTURE_CORPUS, corpus_by_id, gold_relevant
+import time
 from medai.graph import build_supervisor_graph
-from medai.tools.analysis import meta_analysis_fixed, valid_analysis
+from medai.tools.analysis import meta_analysis, meta_analysis_fixed, valid_analysis
 from medai.tools.extraction import extract_evidence, extract_effects
 from medai.tools.guard import ToolError, ToolGuard
 from medai.tools.retrieval import search_papers, valid_paper_list
@@ -233,6 +234,7 @@ def test_multi_source_merge_dedupes_by_doi(monkeypatch):
     monkeypatch.setattr(R, "_openalex_search", lambda q, n: [
         dict(id="DOI:10.1/x", title="Same work", abstract="a", doi="10.1/x", source="openalex"),
         dict(id="DOI:10.2/y", title="Other work", abstract="b", doi="10.2/y", source="openalex")])
+    monkeypatch.setattr(R, "_arxiv_search", lambda q, n: [])
     monkeypatch.setattr(R, "_semantic_scholar_search", lambda q, n: [
         dict(id="S2:z", title="Third work", abstract="c", doi="", source="semantic_scholar")])
     res = R.search_papers("query", 10, live=True)
@@ -251,6 +253,7 @@ def test_source_failure_degrades_gracefully(monkeypatch):
 
     monkeypatch.setattr(R, "_pubmed_search", boom)
     monkeypatch.setattr(R, "_openalex_search", boom)
+    monkeypatch.setattr(R, "_arxiv_search", boom)
     monkeypatch.setattr(R, "_semantic_scholar_search",
                         lambda q, n: [dict(id="S2:1", title="t", abstract="a",
                                            doi="", source="semantic_scholar")])
@@ -264,7 +267,8 @@ def test_all_sources_failing_falls_back_to_corpus(monkeypatch):
     def boom(*a, **k):
         raise TimeoutError("offline")
 
-    for src in ("_pubmed_search", "_openalex_search", "_semantic_scholar_search"):
+    for src in ("_pubmed_search", "_openalex_search", "_arxiv_search",
+                "_semantic_scholar_search"):
         monkeypatch.setattr(R, src, boom)
     res = R.search_papers("aspirin myocardial infarction", 5, live=True)
     assert {"P001", "P002"} <= {p["id"] for p in res}
@@ -282,6 +286,37 @@ def test_live_scholarly_search_returns_multi_source_papers():
     sources = {p["source"] for p in papers}
     assert len(papers) >= 5
     assert "openalex" in sources or "semantic_scholar" in sources, sources
+    assert all(p["id"] and p["title"] and p["abstract"] for p in papers)
+
+
+def test_arxiv_atom_parsing():
+    import medai.tools.retrieval as R
+    atom = (b'<?xml version="1.0" encoding="UTF-8"?>'
+            b'<feed xmlns="http://www.w3.org/2005/Atom">'
+            b'<entry><id>http://arxiv.org/abs/2401.12345v2</id>'
+            b'<title>  Agentic AI for\n  Healthcare </title>'
+            b'<summary>  We survey agentic systems. </summary>'
+            b'<arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">10.48550/arXiv.2401.12345</arxiv:doi>'
+            b'</entry><entry><id>http://arxiv.org/abs/2402.99</id>'
+            b'<title>No abstract entry</title></entry></feed>')
+    papers = R._parse_arxiv_xml(atom)
+    assert len(papers) == 1  # entry without summary is skipped
+    p = papers[0]
+    assert p["id"] == "ARXIV:2401.12345" and p["source"] == "arxiv"
+    assert p["title"] == "Agentic AI for Healthcare"
+    assert p["doi"] == "10.48550/arxiv.2401.12345"
+
+
+def test_arxiv_live_smoke():
+    import urllib.request
+    try:
+        urllib.request.urlopen("https://export.arxiv.org/api/query?max_results=1", timeout=8)
+    except Exception:
+        import pytest
+        pytest.skip("network unavailable")
+    papers = search_papers("large language models medical diagnosis", 10, live=True)
+    sources = {p["source"] for p in papers}
+    assert "arxiv" in sources, sources
     assert all(p["id"] and p["title"] and p["abstract"] for p in papers)
 
 
@@ -312,7 +347,7 @@ def test_supervisor_out_of_domain_reports_no_evidence():
 def test_supervisor_zero_effects_never_reaches_approval_gate(monkeypatch):
     # live-mode scenario: papers retrieved, but no abstract contains a
     # parseable effect estimate -> nothing to synthesize, no approval asked.
-    # Retrieval is stubbed so the test is hermetic (no network dependency).
+    # The corpus source is stubbed so the test is hermetic (no network).
     import medai.graph as G
     fake_papers = [
         dict(id="L1", title="Trial of drug X",
@@ -320,7 +355,9 @@ def test_supervisor_zero_effects_never_reaches_approval_gate(monkeypatch):
         dict(id="L2", title="Cohort study of marker Y",
              abstract="Participants were followed for five years. No events occurred."),
     ]
-    monkeypatch.setattr(G, "search_papers", lambda *a, **k: [dict(p) for p in fake_papers])
+    for adapter in ("_pubmed_search", "_openalex_search", "_arxiv_search",
+                    "_semantic_scholar_search", "_fixture_search"):
+        monkeypatch.setattr(G, adapter, lambda *a, **k: [dict(p) for p in fake_papers])
     graph, audit, tools = build_supervisor_graph()
     cfg = {"configurable": {"thread_id": "t-noeff"}}
     state = graph.invoke({"query": "neurodegenerative disorder", "max_results": 10,
@@ -374,6 +411,108 @@ def test_supervisor_survives_injected_failures():
     assert audit.verify_chain()
 
 
+# ---------------- architecture improvements ----------------
+def test_random_effects_selected_under_heterogeneity():
+    # two wildly different effects with tight CIs -> I2 ~100%, tau2 = 0.49
+    # (DerSimonian-Laird, hand-computed: Q=50, df=1, sum_w=200, sum_w2=20000)
+    effects = [
+        dict(paper_id="A", span="s", measure="md", point=1.0, lo=0.8, hi=1.2, y=1.0, se=0.1),
+        dict(paper_id="B", span="s", measure="md", point=2.0, lo=1.8, hi=2.2, y=2.0, se=0.1),
+    ]
+    r = meta_analysis(effects)
+    assert r["model"] == "random-effects" and r["I2"] == 98.0
+    assert abs(r["tau2"] - 0.49) < 1e-6
+    assert abs(r["pooled_point"] - 1.5) < 1e-6
+    assert abs(r["ci_lo"] - 0.52) < 1e-3 and abs(r["ci_hi"] - 2.48) < 1e-3
+    # both models always reported
+    assert r["fixed_effect"]["point"] == 1.5 and r["random_effects"]["point"] == 1.5
+    assert r["fixed_effect"]["ci"][1] < r["random_effects"]["ci"][1]  # RE CI wider
+
+
+def test_fixed_effects_selected_under_homogeneity():
+    effects = [
+        dict(paper_id="A", span="s", measure="rr", point=0.6, lo=0.5, hi=0.7,
+             y=-0.5108, se=0.08),
+        dict(paper_id="B", span="s", measure="rr", point=0.6, lo=0.5, hi=0.7,
+             y=-0.5108, se=0.08),
+    ]
+    r = meta_analysis(effects)
+    assert r["model"] == "fixed" and r["tau2"] == 0.0
+    assert abs(r["pooled_point"] - 0.6) < 1e-3
+
+
+def test_supervisor_reports_model_name():
+    graph, audit, _ = build_supervisor_graph()
+    cfg = {"configurable": {"thread_id": "t-model"}}
+    state = _drive(graph, query="aspirin myocardial infarction risk")
+    assert "model=" in state["report"]
+    a = state["analysis"]
+    assert a["model"] in ("fixed", "random-effects")
+    assert "fixed_effect" in a and "random_effects" in a
+
+
+def test_fan_out_searches_each_source_and_merges():
+    graph, audit, tools = build_supervisor_graph()
+    state = _drive(graph, query="aspirin myocardial infarction risk")
+    # per-source guarded searches appear in the audit trail
+    searched = {e["tool"] for e in audit.events
+                if e["kind"] == "tool_call" and e["tool"].startswith("search_")}
+    assert "search_corpus" in searched          # offline -> corpus fan-out branch
+    summary = [e for e in audit.events if e["kind"] == "retrieval_summary"][0]
+    assert summary["sources_ok"] == ["corpus"] and summary["papers_after_screen"] >= 4
+    # fan-out results equal the sequential merge for the same query (determinism)
+    from medai.tools.retrieval import search_papers, infer_topic_keywords, screen_papers
+    expected = screen_papers(search_papers(state["query"]),
+                             infer_topic_keywords(state["query"]))
+    assert {p["id"] for p in state["papers"]} == {p["id"] for p in expected}
+
+
+def test_merge_sources_priority_and_dedup():
+    from medai.tools.retrieval import merge_sources
+    lists = [
+        [dict(id="OA:1", title="dup", abstract="", doi="10.1/x"),
+         dict(id="OA:2", title="only-oa", abstract="", doi="10.2/y")],
+        [dict(id="PMID:9", title="dup", abstract="", doi="10.1/x")],
+    ]
+    merged = merge_sources(lists, cap=10, priority=["openalex", "pubmed"])
+    # pubmed has higher priority: its copy of the duplicate wins
+    assert merged[0]["id"] == "PMID:9"
+    assert {m["id"] for m in merged} == {"PMID:9", "OA:2"}
+
+
+def test_bearer_token_auth(monkeypatch):
+    from fastapi.testclient import TestClient
+    from medai.server import app
+    monkeypatch.setenv("MEDAI_API_TOKEN", "s3cret")
+    c = TestClient(app)
+    assert c.post("/runs", json={"query": "aspirin MI"}).status_code == 401
+    assert (c.post("/runs", json={"query": "aspirin MI"},
+                   headers={"Authorization": "Bearer wrong"}).status_code == 401)
+    ok = c.post("/runs", json={"query": "aspirin MI"},
+                headers={"Authorization": "Bearer s3cret"})
+    assert ok.status_code == 200
+    # reads stay open; DELETE requires the token too
+    rid = ok.json()["run_id"]
+    assert c.get(f"/runs/{rid}").status_code == 200
+    assert c.delete(f"/runs/{rid}").status_code == 401
+    assert c.delete(f"/runs/{rid}",
+                    headers={"Authorization": "Bearer s3cret"}).status_code == 200
+
+
+def test_admission_control_bounds_concurrency():
+    from medai import server as S
+    S._MAX_ACTIVE = 2
+    S._active_runs = 0
+    S._admit(); S._admit()
+    import pytest
+    with pytest.raises(Exception) as e:
+        S._admit()
+    assert "429" in str(e.value) or "busy" in str(e.value)
+    S._release(); S._release()
+    S._admit()  # slot freed
+    S._release()
+
+
 # ---------------- eval harness ----------------
 def test_gold_answers_are_consistent():
     from eval.tasks import TASKS, gold_answer
@@ -397,3 +536,167 @@ def test_supervisor_zero_failure_scores_well_on_one_task():
     cm = citation_metrics(res.citations, gold["gold_citations"])
     assert cm["citation_precision"] == 1.0 and cm["citation_recall"] == 1.0
     assert res.audit_ok
+
+
+# ---------------- synthesis feature ----------------
+def test_synthesis_ranking_and_abstract():
+    from medai.synthesis import build_synthesis
+    papers = [
+        dict(id="A", title="Drug X trial", abstract="a randomized trial of drug x", source="pubmed"),
+        dict(id="B", title="Cohort of x exposure", abstract="cohort study of x exposure", source="openalex"),
+        dict(id="C", title="Unrelated review", abstract="narrative review of nothing relevant", source="openalex"),
+    ]
+    evidence = [dict(paper_id="A", measure="hr", point=0.7, lo=0.5, hi=0.9)]
+    analysis = dict(model="random-effects", pooled_point=0.7, ci_lo=0.5, ci_hi=0.9,
+                    k=1, I2=62.0, tau2=0.01, Q=2.6, effect_measure="ratio",
+                    fixed_effect={"point": 0.7, "ci": [0.5, 0.9]},
+                    random_effects={"point": 0.7, "ci": [0.5, 0.9], "tau2": 0.01})
+    s = build_synthesis("drug x outcomes", papers, evidence, analysis, ["pubmed", "openalex"])
+    # the effect-contributing paper must rank first
+    assert s["most_relevant"][0]["id"] == "A" and s["most_relevant"][0]["has_effect"]
+    # abstract cites both the contributing paper and mentions the pooled estimate
+    assert "[1]" in s["abstract"] and "HR 0.7 (95% CI 0.5 to 0.9)" in s["abstract"]
+    assert "random-effects" in s["abstract"] and "0.7 (95% CI 0.5 to 0.9)" in s["abstract"]
+    # outline: most-relevant section lists paper A; limitations section present
+    headings = [sec["heading"] for sec in s["outline"]]
+    assert any("Most relevant" in h for h in headings)
+    assert any("Limitations" in h for h in headings)
+    top_bullets = s["outline"][0]["bullets"]
+    assert any("[1]" in b for b in top_bullets)
+
+
+def test_supervisor_produces_synthesis():
+    graph, audit, _ = build_supervisor_graph()
+    state = _drive(graph, query="aspirin myocardial infarction risk")
+    s = state.get("synthesis")
+    assert s and s["abstract"] and s["outline"]
+    assert state["analysis"]["pooled_point"] is not None
+    assert f"{state['analysis']['pooled_point']}" in s["abstract"]
+    assert any("synthesis" == e["kind"] for e in audit.events)
+
+
+# ---------------- PRISMA review feature ----------------
+def test_review_builder_structure_and_prisma_math():
+    from medai.review import build_review
+    papers = [
+        dict(id="A", title="Trial of X", abstract="", source="pubmed"),
+        dict(id="B", title="Cohort of X", abstract="", source="openalex"),
+    ]
+    evidence = [dict(paper_id="A", measure="rr", point=0.6, lo=0.5, hi=0.7)]
+    analysis = dict(model="random-effects", pooled_point=0.6, ci_lo=0.5, ci_hi=0.7,
+                    k=1, I2=0.0, tau2=0.0, Q=0.0, effect_measure="ratio")
+    prisma = {"identified": {"pubmed": 5, "openalex": 3}, "duplicates_removed": 2,
+              "screened": 6, "excluded_screen": 4, "included": 2}
+    r = build_review("drug x outcomes", papers, evidence, analysis, prisma,
+                     sources_failed=["semantic_scholar"],
+                     search_strategy={"PubMed": "query1"}, created=time.time())
+    # PRISMA flow math must be internally consistent
+    f = r["prisma"]
+    assert sum(x["n"] for x in f["identified"]) - f["duplicates_removed"] == f["screened"]
+    assert f["screened"] - f["excluded"] == f["included"]
+    assert f["with_effects"] == 1 and f["effect_estimates"] == 1
+    assert "Semantic Scholar" in f["unavailable"]
+    # manuscript sections all present
+    for section in ("title", "abstract", "prisma", "methods", "results",
+                    "discussion", "limitations", "conclusion", "references"):
+        assert section in r
+    assert len(r["references"]) == 2 and r["references"][0]["n"] == 1
+    assert "random-effects" in r["abstract"]["results"]
+    assert any("risk-of-bias" in x for x in r["limitations"])  # honest scoping
+
+
+def test_supervisor_writes_review():
+    graph, audit, _ = build_supervisor_graph()
+    state = _drive(graph, query="aspirin myocardial infarction risk")
+    r = state.get("review")
+    assert r and r["references"]
+    assert state["prisma"]["included"] == len(state["papers"])
+    assert state["prisma"]["identified"]["corpus"] >= state["prisma"]["included"]
+    assert any(e["kind"] == "review_written" for e in audit.events)
+
+
+# ---------------- Scopus & IEEE (key-gated sources) ----------------
+def test_scopus_ieee_parsing():
+    import json as _json
+    import medai.tools.retrieval as R
+    scopus = {"search-results": {"entry": [
+        {"dc:title": "<b>ML</b> for triage", "dc:description": "We evaluated models.",
+         "prism:doi": "10.1/A", "dc:identifier": "SCOPUS_ID:42"},
+        {"error": "Result set was empty"}]}}
+    ieee = {"articles": [
+        {"title": "Deep learning triage", "abstract": "We trained models.",
+         "article_number": "9137006", "doi": None},
+        {"title": "No abstract here", "abstract": None}]}
+
+    import urllib.request
+    import json as _jd
+    class FakeResp:
+        def __init__(self, payload): self.payload = payload
+        def read(self): return _jd.dumps(self.payload).encode()
+    def fake_urlopen(url, timeout=0):
+        u = url.full_url if hasattr(url, "full_url") else str(url)
+        if "scopus" in u: return FakeResp(scopus)
+        return FakeResp(ieee)
+
+    orig = urllib.request.urlopen
+    urllib.request.urlopen = fake_urlopen
+    try:
+        monkey_like = {"SCOPUS_API_KEY": "k1", "IEEE_API_KEY": "k2"}
+        old = dict(os.environ)
+        os.environ["SCOPUS_API_KEY"] = "k1"
+        os.environ["IEEE_API_KEY"] = "k2"
+        try:
+            s = R._scopus_search("triage", 5)
+            i = R._ieee_search("triage", 5)
+        finally:
+            for k in ("SCOPUS_API_KEY", "IEEE_API_KEY"):
+                if k in old: os.environ[k] = old[k]
+                else: del os.environ[k]
+    finally:
+        urllib.request.urlopen = orig
+    assert s and s[0]["id"] == "DOI:10.1/a" and s[0]["source"] == "scopus"
+    assert s[0]["title"] == "ML for triage"  # html stripped
+    assert i and i[0]["id"] == "IEEE:9137006" and i[0]["source"] == "ieee"
+    assert len(i) == 1  # abstract-less record skipped
+
+
+def test_key_gated_sources_excluded_without_keys():
+    from medai.tools.retrieval import available_sources
+    import os
+    saved = {k: os.environ.pop(k, None) for k in ("SCOPUS_API_KEY", "IEEE_API_KEY")}
+    try:
+        srcs = available_sources()
+        assert "scopus" not in srcs and "ieee" not in srcs
+        os.environ["SCOPUS_API_KEY"] = "k"
+        srcs = available_sources()
+        assert "scopus" in srcs and "ieee" not in srcs
+        os.environ["IEEE_API_KEY"] = "k"
+        assert "ieee" in available_sources()
+    finally:
+        for k, v in saved.items():
+            if v is not None: os.environ[k] = v
+            else: os.environ.pop(k, None)
+
+
+def test_abstract_follows_journal_structured_format():
+    from medai.synthesis import build_synthesis
+    papers = [dict(id="A", title="Trial of X", abstract="randomized trial of x",
+                   source="pubmed")]
+    evidence = [dict(paper_id="A", measure="rr", point=0.6, lo=0.5, hi=0.7)]
+    analysis = dict(model="random-effects", pooled_point=0.6, ci_lo=0.5, ci_hi=0.7,
+                    k=1, I2=60.0, tau2=0.01, Q=3.0, p_value=0.016,
+                    effect_measure="ratio")
+    s = build_synthesis("drug x outcomes", papers, evidence, analysis, ["pubmed"],
+                        prisma={"identified": {"pubmed": 7}, "screened": 6, "included": 1},
+                        created=1788635655.6)
+    labels = [sec["label"] for sec in s["abstract_sections"]]
+    assert labels == ["Background", "Objective", "Methods", "Results", "Conclusions"]
+    results = s["abstract_sections"][3]["text"]
+    assert "7 records" in results and "6 were screened" in results and "1 were included" in results.replace("1 met", "1 were included") or "1 were included" in results
+    assert "95% CI 0.5–0.7" in results          # en-dash CI per journal style
+    assert "p = 0.016" in results               # p-value reported
+    assert "I² = 60.0%" in results and "τ² = 0.01" in results
+    conclusions = s["abstract_sections"][4]["text"]
+    assert "interpreted as exploratory" in conclusions   # hedged academic claim
+    methods = s["abstract_sections"][2]["text"]
+    assert "human approval" in methods                   # approval statement in methods

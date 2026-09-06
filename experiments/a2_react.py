@@ -8,7 +8,7 @@ approval gate, no citation verification.
 from __future__ import annotations
 
 from medai.audit import AuditLog
-from medai.tools.analysis import meta_analysis_fixed
+from medai.tools.analysis import meta_analysis
 from medai.tools.extraction import extract_evidence
 from medai.tools.guard import ToolError, ToolGuard
 from medai.tools.retrieval import infer_topic_keywords, screen_papers, search_papers
@@ -26,7 +26,7 @@ def run(query: str, failure_rate: float, seed: int) -> RunResult:
     g_extract = ToolGuard(extract_evidence, "extract_evidence", validator=None,
                           failure_rate=failure_rate, fault_type="crash",
                           max_retries=1, seed=seed + 1, audit=audit)
-    g_analyze = ToolGuard(meta_analysis_fixed, "run_meta_analysis", validator=None,
+    g_analyze = ToolGuard(meta_analysis, "run_meta_analysis", validator=None,
                           failure_rate=failure_rate, fault_type="crash",
                           max_retries=1, seed=seed + 2, audit=audit)
 

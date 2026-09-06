@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 import uuid
 
@@ -22,6 +23,17 @@ class AuditLog:
         self.run_id = run_id or uuid.uuid4().hex[:12]
         self.events: list[dict] = []
         self._prev_hash = "GENESIS"
+
+    @classmethod
+    def load(cls, path: str) -> "AuditLog":
+        """Reload an audit trail from its JSONL file, keeping the chain intact
+        so new events appended after a restart continue the same hash chain."""
+        log = cls(path=path)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                log.events = [json.loads(line) for line in f if line.strip()]
+            log._prev_hash = log.events[-1]["hash"] if log.events else "GENESIS"
+        return log
 
     # -- writing ---------------------------------------------------------
     def record(self, kind: str, **fields) -> dict:

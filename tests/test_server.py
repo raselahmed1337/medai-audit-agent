@@ -110,3 +110,18 @@ def test_console_page_served():
     r = client.get("/")
     assert r.status_code == 200
     assert "Approval Console" in r.text
+
+
+def test_run_overview_data_exposed():
+    """Paper overview needs per-paper evidence + abstract snippets in the API."""
+    run_id = client.post("/runs", json={"query": "aspirin myocardial infarction risk"}).json()["run_id"]
+    _wait_pending(run_id)
+    client.post(f"/runs/{run_id}/approval", json={"approved": True, "approver": "overview-test"})
+    body = _poll(run_id)
+    assert body["status"] == "ok"
+    assert body["evidence"], "extracted effects must be exposed for the overview"
+    assert all({"paper_id", "measure", "point", "lo", "hi"} <= set(e) for e in body["evidence"])
+    assert all(p.get("abstract_snippet") for p in body["papers"])
+    # every cited paper has an entry in the overview data
+    paper_ids = {p["id"] for p in body["papers"]}
+    assert set(body["citations"]) <= paper_ids

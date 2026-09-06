@@ -7,7 +7,7 @@ evaluator from the gold-relevant papers (not from agent internals).
 from __future__ import annotations
 
 from medai.corpus import gold_relevant
-from medai.tools.analysis import meta_analysis_fixed
+from medai.tools.analysis import meta_analysis
 from medai.tools.extraction import extract_effects
 from medai.corpus import corpus_by_id
 
@@ -32,6 +32,6 @@ def gold_answer(task: dict) -> dict:
     ids = gold_relevant(task["topic"])
     by_id = corpus_by_id()
     effects = [e for pid in ids for e in extract_effects(by_id[pid])]
-    analysis = meta_analysis_fixed(effects)
+    analysis = meta_analysis(effects)  # same auto model rule as the agent
     return dict(gold_citations=ids, gold_pooled=analysis["pooled_point"],
                 gold_ci=(analysis["ci_lo"], analysis["ci_hi"]))

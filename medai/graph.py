@@ -1,29 +1,41 @@
 """Flagship architecture (A3): LangGraph supervisor with
 
-  plan -> retrieve -> extract -> [human approval gate] -> analyze -> verify -> report
+  plan ──Send fan-out──▶ [search per source] ──▶ merge ──▶ extract
+       ──▶ [human approval gate] ──▶ analyze ──▶ verify ──▶ report
 
 Properties that distinguish it from the baselines (experiments/):
-  * structural human-in-the-loop approval before any sensitive analysis tool
-  * tool failure detection + retry + graceful escalation (never silent)
-  * provenance-enforced report: every citation must exist in the ledger
+  * source retrieval fans out as parallel graph nodes (Send API) — one
+    guarded tool per source, latency = slowest source, and per-source
+    audit events;
+  * structural human-in-the-loop approval before any sensitive analysis tool;
+  * tool failure detection + retry + graceful escalation (never silent);
+  * provenance-enforced report: every citation must exist in the ledger;
+  * meta-analysis with automatic fixed/random-effects model selection.
 """
 from __future__ import annotations
 
 import operator
+import time
 from typing import Annotated, Literal, TypedDict
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Command, interrupt
+from langgraph.types import Command, Send, interrupt
 
 from medai import approvals
 from medai.audit import AuditLog
-from medai.tools.analysis import meta_analysis_fixed, valid_analysis
+from medai.review import build_review
+from medai.synthesis import build_synthesis
+from medai.tools.analysis import meta_analysis, valid_analysis
 from medai.tools.extraction import extract_evidence, valid_evidence
 from medai.tools.guard import ToolError, ToolGuard
-from medai.tools.retrieval import (DEFAULT_LIVE_SOURCES, infer_topic_keywords,  # noqa: E402
-                                   pubmed_effective_query, screen_papers,
-                                   search_papers, valid_paper_list)
+from medai.tools.retrieval import (DEFAULT_LIVE_SOURCES, _arxiv_search,  # noqa: E402
+                                   _fixture_search, _ieee_search,
+                                   _openalex_search, _pubmed_search,
+                                   _scopus_search, _semantic_scholar_search,
+                                   available_sources, infer_topic_keywords,
+                                   merge_sources, pubmed_effective_query,
+                                   screen_papers, valid_paper_list)
 
 
 class ResearchState(TypedDict):
@@ -36,43 +48,107 @@ class ResearchState(TypedDict):
     analysis: dict | None
     report: str
     citations: list[str]
-    status: str  # "ok" | "declined" | "failed:<tool>"
+    synthesis: dict | None
+    review: dict | None
+    prisma: dict | None
+    status: str  # ok | declined | no_evidence | no_extractable_evidence | failed:<tool>
     audit_events: Annotated[list[dict], operator.add]
+    # parallel retrieval fan-out
+    source_results: Annotated[list[dict], operator.add]  # [{source, papers}]
+    sources_failed: Annotated[list[str], operator.add]
 
 
 def build_toolchain(failure_rate: float = 0.0, fault_type: str = "mixed",
                     seed: int = 0, audit: AuditLog | None = None) -> dict:
-    """Guarded tools shared by all architectures (same fault model)."""
+    """Guarded tools shared by all architectures (same fault model). One guard
+    per retrieval source so the fan-out nodes fail/retry independently."""
+    def guarded(name, fn, validator, seed_off):
+        return ToolGuard(fn, name, validator=validator, failure_rate=failure_rate,
+                         fault_type=fault_type, seed=seed + seed_off, audit=audit)
     return {
-        "search_papers": ToolGuard(search_papers, "search_papers", validator=valid_paper_list,
-                                   failure_rate=failure_rate, fault_type=fault_type, seed=seed, audit=audit),
-        "extract_evidence": ToolGuard(extract_evidence, "extract_evidence", validator=valid_evidence,
-                                      failure_rate=failure_rate, fault_type=fault_type, seed=seed + 1, audit=audit),
-        "run_meta_analysis": ToolGuard(meta_analysis_fixed, "run_meta_analysis", validator=valid_analysis,
-                                       failure_rate=failure_rate, fault_type=fault_type, seed=seed + 2, audit=audit),
+        "search_corpus": guarded("search_corpus", _fixture_search, valid_paper_list, 0),
+        "search_pubmed": guarded("search_pubmed", _pubmed_search, valid_paper_list, 1),
+        "search_openalex": guarded("search_openalex", _openalex_search, valid_paper_list, 2),
+        "search_arxiv": guarded("search_arxiv", _arxiv_search, valid_paper_list, 3),
+        "search_scopus": guarded("search_scopus", _scopus_search, valid_paper_list, 4),
+        "search_ieee": guarded("search_ieee", _ieee_search, valid_paper_list, 5),
+        "search_semantic_scholar": guarded("search_semantic_scholar",
+                                           _semantic_scholar_search, valid_paper_list, 6),
+        "extract_evidence": guarded("extract_evidence", extract_evidence, valid_evidence, 7),
+        "run_meta_analysis": guarded("run_meta_analysis", meta_analysis, valid_analysis, 8),
     }
 
 
 # --------------------------------------------------------------------------
 # nodes
 
-def _retrieve(state: ResearchState, tools) -> dict:
-    audit = tools["search_papers"].audit
+def _plan(state: ResearchState, tools) -> list[Send]:
+    """Choose sources and fan out one parallel search node per source."""
+    audit = tools["search_corpus"].audit
     live = bool(state.get("live", False))
-    audit.record("retrieval_mode", live=live,
-                 sources=list(DEFAULT_LIVE_SOURCES) if live else ["fixture"],
+    sources = list(available_sources()) if live else ["corpus"]
+    audit.record("retrieval_mode", live=live, sources=sources,
                  pubmed_query=pubmed_effective_query(state["query"]) if live else None)
+    return [Send("search_source", {"source": s, "query": state["query"],
+                                   "max_results": state.get("max_results", 10),
+                                   "live": live, "status": "ok"})
+            for s in sources]
+
+
+def _search_source(state: ResearchState, tools) -> dict:
+    """One guarded search against a single source (executes in parallel)."""
+    src = state["source"]
+    guard = tools[f"search_{src}"]
     try:
-        papers = tools["search_papers"].call(state["query"], state.get("max_results", 10),
-                                             state.get("live", False))
-        papers = screen_papers(papers, infer_topic_keywords(state["query"]))
+        papers = guard.call(state["query"], state.get("max_results", 10))
     except ToolError as e:
-        return {"status": "failed:search_papers",
-                "audit_events": [audit.record("node_failure", node="retrieve", error=str(e))]}
+        return {"sources_failed": [src],
+                "source_results": [{"source": src, "papers": []}],
+                "audit_events": [guard.audit.record(
+                    "node_failure", node=f"search_{src}", error=str(e))]}
+    return {"source_results": [{"source": src, "papers": papers}]}
+
+
+def _merge(state: ResearchState, tools) -> dict:
+    """Dedupe + interleave the parallel results, then apply the PICOS screen.
+    Records PRISMA flow counts (identification -> screening -> inclusion)."""
+    audit = tools["search_corpus"].audit
+    results = state.get("source_results", [])
+    failed = set(state.get("sources_failed", []))
+    attempted = {r["source"] for r in results} | failed
+    identified = {r["source"]: len(r["papers"]) for r in results}
+    raw_total = sum(identified.values())
+    order = [s for s in ["corpus", "pubmed", "scopus", "openalex", "arxiv",
+                         "semantic_scholar", "ieee"]
+             if s in {r["source"] for r in results}]
+    merged_raw = merge_sources([r["papers"] for r in results if r["papers"]],
+                               state.get("max_results", 10), priority=order)
+    duplicates_removed = raw_total - len(merged_raw)
+    papers = screen_papers(merged_raw, infer_topic_keywords(state["query"]))
+    if not papers:
+        # all sources failed or nothing matched -> corpus fallback (offline-safe)
+        try:
+            papers = screen_papers(tools["search_corpus"].call(state["query"],
+                                   state.get("max_results", 10)),
+                                   infer_topic_keywords(state["query"]))
+            if papers:
+                audit.record("retrieval_fallback", reason="no results from sources")
+                identified["corpus"] = len(papers)
+        except ToolError:
+            pass
     if not papers:
         audit.record("no_evidence", query=state["query"])
         return {"status": "no_evidence"}
-    return {"papers": papers}
+    prisma = {
+        "identified": identified,
+        "duplicates_removed": duplicates_removed,
+        "screened": len(merged_raw),
+        "excluded_screen": len(merged_raw) - len(papers),
+        "included": len(papers),
+    }
+    audit.record("retrieval_summary", sources_ok=sorted(attempted - failed),
+                 sources_failed=sorted(failed), papers_after_screen=len(papers))
+    return {"papers": papers, "prisma": prisma}
 
 
 def _extract(state: ResearchState, tools) -> dict:
@@ -133,11 +209,61 @@ def _verify_citations(state: ResearchState, audit: AuditLog) -> dict:
             "analysis": {**state["analysis"], "cited_papers": supported}}
 
 
+def _synthesize(state: ResearchState, audit: AuditLog) -> dict:
+    """Deterministic combined abstract + review outline from the run's own
+    artifacts (audited; the LLM writer can later replace this node)."""
+    analysis = state.get("analysis") or {}
+    if not analysis:
+        return {}
+    sources_used = sorted({p.get("source", "fixture") for p in state.get("papers", [])})
+    synthesis = build_synthesis(state["query"], state.get("papers", []),
+                                state.get("evidence", []), analysis, sources_used,
+                                prisma=state.get("prisma"), created=time.time())
+    audit.record("synthesis", abstract_chars=len(synthesis["abstract"]),
+                 outline_sections=len(synthesis["outline"]),
+                 top_papers=[r["id"] for r in synthesis["most_relevant"][:3]])
+    return {"synthesis": synthesis}
+
+
+def _write_review(state: ResearchState, audit: AuditLog) -> dict:
+    """PRISMA-style rapid review manuscript from the run's own artifacts."""
+    if not state.get("papers"):
+        return {}
+    search_strategy = {}
+    if state.get("live"):
+        srcs = set(available_sources())
+        if "pubmed" in srcs:
+            search_strategy["PubMed"] = pubmed_effective_query(state["query"])
+        if "scopus" in srcs:
+            search_strategy["Scopus"] = state["query"]
+        if "openalex" in srcs:
+            search_strategy["OpenAlex"] = state["query"]
+        if "arxiv" in srcs:
+            search_strategy["arXiv"] = " AND ".join(
+                f"all:{t}" for t in state["query"].lower().split() if len(t) > 1)
+        if "semantic_scholar" in srcs:
+            search_strategy["Semantic Scholar"] = state["query"]
+        if "ieee" in srcs:
+            search_strategy["IEEE Xplore"] = state["query"]
+    else:
+        search_strategy["built-in corpus"] = state["query"]
+    review = build_review(state["query"], state.get("papers", []),
+                          state.get("evidence", []), state.get("analysis"),
+                          state.get("prisma") or {},
+                          sources_failed=state.get("sources_failed", []),
+                          search_strategy=search_strategy,
+                          created=time.time())
+    audit.record("review_written", title=review["title"],
+                 references=len(review["references"]))
+    return {"review": review}
+
+
 def _report(state: ResearchState, audit: AuditLog) -> dict:
     a = state.get("analysis") or {}
     text = (f"Pooled estimate for '{state['query']}': {a.get('pooled_point')} "
             f"(95% CI {a.get('ci_lo')} to {a.get('ci_hi')}; k={a.get('k')}, "
-            f"I2={a.get('I2')}%, p={a.get('p_value')}). Cited: {', '.join(state.get('citations', []))}.")
+            f"I2={a.get('I2')}%, model={a.get('model')}, p={a.get('p_value')}). "
+            f"Cited: {', '.join(state.get('citations', []))}.")
     audit.report(text, state.get("citations", []))
     return {"report": text, "status": "ok"}
 
@@ -145,16 +271,6 @@ def _report(state: ResearchState, audit: AuditLog) -> dict:
 def _report_declined(state: ResearchState, audit: AuditLog) -> dict:
     return {"report": "Analysis declined by human approver; no results produced.",
             "citations": [], "status": "declined"}
-
-
-def _report_no_extractable(state: ResearchState, audit: AuditLog) -> dict:
-    n = len(state.get("papers", []))
-    msg = (f"Retrieved {n} papers for '{state['query']}', but none reported effect "
-           "estimates the analyzer can pool (it reads risk ratios, odds ratios, "
-           "hazard ratios, or mean differences with 95% CIs from abstracts). "
-           "Try queries targeting randomized trial results, or screen the "
-           "retrieved papers in the audit log.")
-    return {"report": msg, "citations": [], "status": "no_extractable_evidence"}
 
 
 def _report_failed(state: ResearchState, audit: AuditLog) -> dict:
@@ -170,15 +286,37 @@ def _report_no_evidence(state: ResearchState, audit: AuditLog) -> dict:
     return {"report": msg, "citations": [], "status": "no_evidence"}
 
 
+def _report_no_extractable(state: ResearchState, audit: AuditLog) -> dict:
+    n = len(state.get("papers", []))
+    msg = (f"Retrieved {n} papers for '{state['query']}', but none reported effect "
+           "estimates the analyzer can pool (it reads risk ratios, odds ratios, "
+           "hazard ratios, or mean differences with 95% CIs from abstracts). "
+           "Try queries targeting randomized trial results, or screen the "
+           "retrieved papers in the audit log.")
+    return {"report": msg, "citations": [], "status": "no_extractable_evidence"}
+
+
 # --------------------------------------------------------------------------
 
 def build_supervisor_graph(failure_rate: float = 0.0, fault_type: str = "mixed",
-                           seed: int = 0, audit: AuditLog | None = None):
+                           seed: int = 0, audit: AuditLog | None = None,
+                           checkpointer=None):
+    """Build the supervisor graph.
+
+    checkpointer: pass a shared durable saver (e.g. PostgresSaver) for
+    long-lived deployments; defaults to a fresh InMemorySaver (tests/demo).
+    """
     audit = audit or AuditLog()
     tools = build_toolchain(failure_rate, fault_type, seed, audit)
 
-    def retrieve(s):
-        return _retrieve(s, tools)
+    def plan(s):
+        return _plan(s, tools)
+
+    def search_source(s):
+        return _search_source(s, tools)
+
+    def merge(s):
+        return _merge(s, tools)
 
     def extract(s):
         return _extract(s, tools)
@@ -191,6 +329,12 @@ def build_supervisor_graph(failure_rate: float = 0.0, fault_type: str = "mixed",
 
     def verify(s):
         return _verify_citations(s, audit)
+
+    def synthesize(s):
+        return _synthesize(s, audit)
+
+    def write_review(s):
+        return _write_review(s, audit)
 
     def report(s):
         return _report(s, audit)
@@ -207,7 +351,7 @@ def build_supervisor_graph(failure_rate: float = 0.0, fault_type: str = "mixed",
     def report_no_extractable(s):
         return _report_no_extractable(s, audit)
 
-    def after_retrieve(s) -> Literal["extract", "report_no_evidence", "report_failed"]:
+    def after_merge(s) -> Literal["extract", "report_no_evidence", "report_failed"]:
         st = s.get("status", "ok")
         if st.startswith("failed"):
             return "report_failed"
@@ -228,23 +372,31 @@ def build_supervisor_graph(failure_rate: float = 0.0, fault_type: str = "mixed",
 
     builder = (
         StateGraph(ResearchState)
-        .add_node("retrieve", retrieve)
+        .add_node("search_source", search_source)
+        .add_node("merge", merge)
         .add_node("extract", extract)
         .add_node("approval_gate", approval_gate)
         .add_node("analyze", analyze)
         .add_node("verify", verify)
+        .add_node("synthesize", synthesize)
+        .add_node("write_review", write_review)
         .add_node("report", report)
         .add_node("report_declined", report_declined)
         .add_node("report_failed", report_failed)
         .add_node("report_no_evidence", report_no_evidence)
         .add_node("report_no_extractable", report_no_extractable)
-        .add_edge(START, "retrieve")
-        .add_conditional_edges("retrieve", after_retrieve)
+        .add_conditional_edges(START, plan)           # fan-out: returns [Send(...)]
+        .add_edge("search_source", "merge")           # LangGraph joins the branches
+        .add_conditional_edges("merge", after_merge)
         .add_conditional_edges("extract", after_extract)
         .add_conditional_edges("analyze", after_analyze)
-        .add_edge("verify", "report")
+        .add_edge("verify", "synthesize")
+        .add_edge("synthesize", "write_review")
+        .add_edge("write_review", "report")
         .add_edge("report", END)
         .add_edge("report_declined", END)
         .add_edge("report_failed", END)
+        .add_edge("report_no_evidence", END)
+        .add_edge("report_no_extractable", END)
     )
-    return builder.compile(checkpointer=InMemorySaver()), audit, tools
+    return builder.compile(checkpointer=checkpointer or InMemorySaver()), audit, tools

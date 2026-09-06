@@ -9,6 +9,7 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -20,12 +21,31 @@ from medai.corpus import FIXTURE_CORPUS, TOPIC_KEYWORDS
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 OPENALEX = "https://api.openalex.org/works"
 SEMANTIC_SCHOLAR = "https://api.semanticscholar.org/graph/v1/paper/search"
+ARXIV_API = "https://export.arxiv.org/api/query"
+SCOPUS_API = "https://api.elsevier.com/content/search/scopus"
+IEEE_API = "https://ieeexploreapi.ieee.org/api/v1/search/articles"
 OPENALEX_MAILTO = "medai-agent@example.org"  # OpenAlex polite pool
 
 # Live sources, queried in order. Google Scholar itself has no API and forbids
 # automated access (CAPTCHA/ToS), so scholarly-web coverage comes from OpenAlex
-# (~250M works, the open "Google Scholar as a database") and Semantic Scholar.
-DEFAULT_LIVE_SOURCES = ("pubmed", "openalex", "semantic_scholar")
+# (~250M works), Semantic Scholar, and arXiv (preprints). Scopus and IEEE
+# Xplore are key-gated: they join the fan-out only when SCOPUS_API_KEY /
+# IEEE_API_KEY are configured.
+DEFAULT_LIVE_SOURCES = ("pubmed", "scopus", "openalex", "arxiv",
+                        "semantic_scholar", "ieee")
+KEYED_SOURCES = {"scopus": "SCOPUS_API_KEY", "ieee": "IEEE_API_KEY"}
+
+
+def available_sources() -> tuple[str, ...]:
+    """Live sources that can actually run right now — key-gated ones are
+    included only when their API key is configured."""
+    out = []
+    for src in DEFAULT_LIVE_SOURCES:
+        env = KEYED_SOURCES.get(src)
+        if env and not os.environ.get(env):
+            continue
+        out.append(src)
+    return tuple(out)
 
 # Live retrieval targets study designs that report poolable effects: without
 # this, broad topical queries surface narrative reviews and commentary whose
@@ -69,6 +89,35 @@ def expand_terms(tokens: list[str]) -> list[tuple[str, float]]:
     return sorted(out.items(), key=lambda kv: (-kv[1], kv[0]))
 
 
+SOURCE_PRIORITY = {"corpus": 0, "pubmed": 1, "scopus": 2, "openalex": 3,
+                   "arxiv": 4, "semantic_scholar": 5, "ieee": 6}
+
+
+def merge_sources(paper_lists: list[list[dict]], cap: int,
+                  priority: list[str] | None = None) -> list[dict]:
+    """Deduplicate (DOI first-occurrence wins) and round-robin interleave
+    source result lists up to `cap`. Lists are processed in priority order
+    (earlier sources keep their copy of duplicates) so the merge is
+    deterministic regardless of completion order."""
+    order = priority or [f"src{i}" for i in range(len(paper_lists))]
+    seen: set[str] = set()
+    deduped: list[list[dict]] = []
+    for _src, lst in sorted(zip(order, paper_lists), key=lambda t: SOURCE_PRIORITY.get(t[0], 99)):
+        fresh = []
+        for p in lst:
+            key = _dedup_key(p)
+            if key not in seen:
+                seen.add(key)
+                fresh.append(p)
+        deduped.append(fresh)
+    merged: list[dict] = []
+    for batch in itertools.zip_longest(*deduped):
+        for p in batch:
+            if p is not None and len(merged) < cap:
+                merged.append(p)
+    return merged
+
+
 def search_papers(query: str, max_results: int = 10, live: bool = False,
                   sources: tuple[str, ...] | None = None) -> list[dict]:
     """Return papers [{id, title, abstract, source}] best matching `query`.
@@ -77,42 +126,38 @@ def search_papers(query: str, max_results: int = 10, live: bool = False,
     fixture corpus — deterministic and reproducible. Live mode queries the
     selected sources (PubMed + OpenAlex + Semantic Scholar by default),
     merges results with DOI-based deduplication, and degrades gracefully
-    when any single source fails.
+    when any single source fails. (The supervisor graph fans these sources
+    out as parallel nodes; this sequential version is used by the baselines
+    and CLI.)
     """
     if live:
         failures = 0
-        seen: set[str] = set()
-        per_source: list[list[dict]] = []
-        for src in (sources or DEFAULT_LIVE_SOURCES):
+        results: list[list[dict]] = []
+        order: list[str] = []
+        for src in (sources or available_sources()):
             try:
                 if src == "pubmed":
                     papers = _pubmed_search(query, max_results)
+                elif src == "scopus":
+                    papers = _scopus_search(query, max_results)
                 elif src == "openalex":
                     papers = _openalex_search(query, max_results)
+                elif src == "arxiv":
+                    papers = _arxiv_search(query, max_results)
                 elif src == "semantic_scholar":
                     papers = _semantic_scholar_search(query, max_results)
+                elif src == "ieee":
+                    papers = _ieee_search(query, max_results)
                 else:
                     continue
             except Exception:
                 failures += 1
                 continue  # one failing source never breaks the run
-            fresh = []
-            for p in papers:
-                key = _dedup_key(p)
-                if key not in seen:
-                    seen.add(key)
-                    fresh.append(p)
-            if fresh:
-                per_source.append(fresh)
-        # round-robin interleave so every successful source is represented
-        # (dedup already gave priority to earlier sources for duplicates)
-        merged: list[dict] = []
-        for batch in itertools.zip_longest(*per_source):
-            for p in batch:
-                if p is not None and len(merged) < max_results:
-                    merged.append(p)
-        if merged:
-            return merged
+            if papers:
+                results.append(papers)
+                order.append(src)
+        if results:
+            return merge_sources(results, max_results, priority=order)
         if failures == 0:
             return []  # genuinely no results anywhere
         # every source failed (e.g. offline) -> fall back to the corpus
@@ -185,6 +230,99 @@ def _semantic_scholar_search(query: str, max_results: int) -> list[dict]:
         out.append(dict(id=pid, title=w.get("title") or "",
                         abstract=w["abstract"], doi=doi,
                         source="semantic_scholar"))
+    return out
+
+
+def _arxiv_search(query: str, max_results: int) -> list[dict]:
+    """arXiv Atom API: AND-join the query terms over the all-field, sorted by
+    relevance. arXiv's politeness guideline is ~1 request / 3s — we issue one
+    call per run, which respects it."""
+    tokens = [t for t in query.lower().split() if len(t) > 1]
+    if not tokens:
+        return []
+    params = urllib.parse.urlencode({
+        "search_query": " AND ".join(f"all:{t}" for t in tokens),
+        "max_results": max_results, "sortBy": "relevance",
+    })
+    xml_bytes = urllib.request.urlopen(f"{ARXIV_API}?{params}", timeout=15).read()
+    return _parse_arxiv_xml(xml_bytes)
+
+
+_ATOM = "{http://www.w3.org/2005/Atom}"
+
+
+def _parse_arxiv_xml(xml_bytes: bytes) -> list[dict]:
+    out = []
+    for entry in ET.fromstring(xml_bytes).iter(f"{_ATOM}entry"):
+        raw_id = (entry.findtext(f"{_ATOM}id") or "").rsplit("/", 1)[-1]
+        arxiv_id = re.sub(r"v\d+$", "", raw_id)  # strip version suffix
+        title = " ".join((entry.findtext(f"{_ATOM}title") or "").split())
+        abstract = " ".join((entry.findtext(f"{_ATOM}summary") or "").split())
+        if not arxiv_id or not abstract:
+            continue
+        doi_el = entry.find(f"{_ATOM}doi")
+        if doi_el is None:  # arXiv puts its own doi in the arxiv namespace
+            doi_el = entry.find("{http://arxiv.org/schemas/atom}doi")
+        doi = (doi_el.text or "").lower() if doi_el is not None else ""
+        out.append(dict(id=f"ARXIV:{arxiv_id}", title=title, abstract=abstract,
+                        doi=doi, source="arxiv"))
+    return out
+
+
+def _strip_html(text: str) -> str:
+    return " ".join(re.sub(r"<[^>]+>", " ", text or "").split()).strip()
+
+
+def _scopus_search(query: str, max_results: int) -> list[dict]:
+    """Scopus (Elsevier) search API. Requires SCOPUS_API_KEY — the source is
+    only dispatched when the key is configured (see available_sources)."""
+    key = os.environ.get("SCOPUS_API_KEY")
+    if not key:
+        raise RuntimeError("SCOPUS_API_KEY not configured")
+    params = urllib.parse.urlencode({
+        "query": query, "count": max_results,
+        "field": "dc:title,dc:description,prism:doi,dc:identifier",
+    })
+    data = _get_json(f"{SCOPUS_API}?{params}", headers={"X-ELS-APIKey": key})
+    entries = (data.get("search-results") or {}).get("entry") or []
+    out = []
+    for e in entries:
+        if isinstance(e, dict) and "error" in e:
+            continue
+        abstract = _strip_html(e.get("dc:description"))
+        if not abstract:
+            continue
+        doi = (e.get("prism:doi") or "").lower()
+        scopus_id = (e.get("dc:identifier") or "").split(":")[-1]
+        pid = f"DOI:{doi}" if doi else f"SCOPUS:{scopus_id}"
+        out.append(dict(id=pid, title=_strip_html(e.get("dc:title")),
+                        abstract=abstract, doi=doi, source="scopus"))
+    return out
+
+
+def _ieee_search(query: str, max_results: int) -> list[dict]:
+    """IEEE Xplore metadata API. Requires IEEE_API_KEY (free registration);
+    only dispatched when the key is configured."""
+    key = os.environ.get("IEEE_API_KEY")
+    if not key:
+        raise RuntimeError("IEEE_API_KEY not configured")
+    params = urllib.parse.urlencode({
+        "apikey": key, "querytext": query,
+        "max_records": max_results, "format": "json",
+    })
+    data = _get_json(f"{IEEE_API}?{params}")
+    out = []
+    for a in (data.get("articles") or []):
+        abstract = _strip_html(a.get("abstract"))
+        if not abstract:
+            continue
+        doi = (a.get("doi") or "").lower()
+        article_number = str(a.get("article_number") or "")
+        html_url = a.get("html_url") or ""
+        pid = f"DOI:{doi}" if doi else (f"IEEE:{article_number}" if article_number
+                                        else "IEEE:" + html_url.rsplit("/", 1)[-1])
+        out.append(dict(id=pid, title=_strip_html(a.get("title")),
+                        abstract=abstract, doi=doi, source="ieee"))
     return out
 
 
