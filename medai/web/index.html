@@ -397,7 +397,7 @@
       <div class="field">
         <label class="toggle" style="text-transform:none;letter-spacing:0">
           <input type="checkbox" id="live">
-          <span>Live retrieval <span class="src">· PubMed + OpenAlex + arXiv + Semantic Scholar&nbsp;(+ Scopus/IEEE with API keys)</span></span>
+          <span>Live retrieval <span class="src">· PubMed + Scopus + OpenAlex + Google Scholar + arXiv + Semantic Scholar + IEEE&nbsp;(Scopus/IEEE/Scholar need API keys)</span></span>
       </div>
       <div class="field">
         <label class="toggle" style="text-transform:none;letter-spacing:0">
@@ -493,8 +493,8 @@ function citeLink(id) {
   if (id.startsWith("S2:"))   return `https://www.semanticscholar.org/paper/${id.slice(3)}`;
   return null;
 }
-function paperLink(id, text) {
-  const href = citeLink(id);
+function paperLink(id, text, url) {
+  const href = url || citeLink(id);
   return href ? `<a class="plink" href="${href}" target="_blank" rel="noopener">${esc(text)}</a>`
               : `<span>${esc(text)}</span>`;
 }
@@ -657,104 +657,102 @@ function synthesisCards(d) {
   return html;
 }
 
-function forestCard(d) {
+function evidenceAnalysisCard(d) {
   const a = d.analysis;
   if (!a || !d.evidence || !d.evidence.length) return "";
   const ratio = a.effect_measure === "ratio";
-  const nullVal = ratio ? 1 : 0;
-  const tf = v => ratio ? Math.log(v) : v;   // to analysis scale
-  const fb = v => ratio ? Math.exp(v) : v;   // back to display scale
+  const nullV = ratio ? 1 : 0;
+  const tf = v => ratio ? Math.log(v) : v;
+  const fb = v => ratio ? Math.exp(v) : v;
   const f3 = v => Math.round(v * 1000) / 1000;
-
   const rows = d.evidence.map(e => {
     const se = ratio ? (Math.log(e.hi) - Math.log(e.lo)) / 3.92 : (e.hi - e.lo) / 3.92;
     const idx = d.papers.findIndex(p => p.id === e.paper_id);
-    return { ...e, disp: { point: e.point, lo: e.lo, hi: e.hi },
-             y: tf(e.point), lo: tf(e.lo), hi: tf(e.hi), w: 1 / (se * se),
-             ref: idx + 1,
-             title: (d.papers[idx] || {}).title || e.paper_id };
+    return { ...e, se, ref: idx + 1, title: (d.papers[idx] || {}).title || e.paper_id };
   });
-  const wsum = rows.reduce((s, r) => s + r.w, 0);
-  rows.forEach(r => r.wpct = Math.max(1, Math.round(100 * r.w / wsum)));
+  const maxSe = Math.max(...rows.map(r => r.se));
 
-  const pooled = { y: tf(a.pooled_point), lo: tf(a.ci_lo), hi: tf(a.ci_hi),
-                   label: `Pooled (${a.model})`, cls: "pooled-diamond" };
-  const fixed = a.fixed_effect ? { y: tf(a.fixed_effect.point), lo: tf(a.fixed_effect.ci[0]),
-                                   hi: tf(a.fixed_effect.ci[1]), label: "Pooled (fixed-effect)",
-                                   cls: "fixed-diamond" } : null;
-  const diamonds = a.model === "random-effects" && fixed ? [fixed, pooled] : [pooled];
-
-  let dLo = Math.min(...rows.map(r => r.lo), ...diamonds.map(x => x.lo), tf(nullVal));
-  let dHi = Math.max(...rows.map(r => r.hi), ...diamonds.map(x => x.hi), tf(nullVal));
-  const pad = (dHi - dLo) * 0.08 || 0.1; dLo -= pad; dHi += pad;
-
-  // ticks: nice ratio values in natural-log space (ratios) or even steps (MDs)
-  const ticks = new Set([tf(nullVal)]);
-  if (ratio) {
-    const NICE = [0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 1, 1.5, 2, 3, 5, 7, 10, 20, 50, 100];
-    let cands = NICE.map(v => ({ v, e: Math.log(v) }))
-                    .filter(t => t.e >= dLo && t.e <= dHi)
-                    .map(t => t.e);
-    while (cands.length > 7) cands = cands.filter((_, i) => i % 2 === 0);
-    for (const e of cands) ticks.add(e);
-  } else {
-    const step = (dHi - dLo) / 6;
-    for (let v = dLo; v <= dHi; v += step) ticks.add(v);
-  }
-
-  const W = 780, labelW = 240, valW = 168, rowH = 30;
-  const totalRows = rows.length + diamonds.length;
-  const H = 40 + rowH * totalRows + 34;
-  const X = v => labelW + ((v - dLo) / (dHi - dLo)) * (W - labelW - valW);
-  let y = 34;
-  let svg = `<svg class="forest-plot" viewBox="0 0 ${W} ${H}" width="100%" style="min-width:640px">`;
-  // null reference line
-  svg += `<line class="ref-line" x1="${X(tf(nullVal))}" y1="22" x2="${X(tf(nullVal))}" y2="${H - 30}"/>`;
-  // axis tick labels
-  for (const t of [...ticks].sort((p, q) => p - q)) {
-    const lbl = ratio ? f3(fb(t)) : f3(t);
-    svg += `<text class="axis-label" x="${X(t)}" y="${H - 12}" text-anchor="middle">${lbl}</text>`;
-  }
-  svg += `<text class="axis-caption" x="${X((dLo + dHi) / 2)}" y="${H}" text-anchor="middle">${ratio ? "effect size (log scale)" : "effect size"} — dashed line = no effect</text>`;
-
-  const trunc = s => s.length > 34 ? s.slice(0, 33) + "…" : s;
+  // ---- funnel plot: effect vs precision, inverted axis --------------------
+  const fw = 700, fm = 56, flw = 10, fvw = 10;
+  let fxLo = Math.min(...rows.map(r => tf(r.point)), tf(nullV), tf(a.pooled_point));
+  let fxHi = Math.max(...rows.map(r => tf(r.point)), tf(nullV), tf(a.pooled_point));
+  const fxPad = (fxHi - fxLo) * 0.12 || 0.1; fxLo -= fxPad; fxHi += fxPad;
+  const seY = maxSe * 1.15;
+  const fH = 40 + seY / maxSe * 160 + 34;
+  const FX = v => fm + flw + ((v - fxLo) / (fxHi - fxLo)) * (fw - fm - flw - fvw);
+  const FY = se => 22 + (se / seY) * (fH - 62);
+  let fs = `<svg class="ea-plot" viewBox="0 0 ${fw} ${fH}" width="100%" style="min-width:560px">`;
+  fs += `<polygon class="funnel-region" points="${FX(tf(nullV))},${FY(0)} ${FX(tf(nullV) - 1.96 * seY)},${FY(seY)} ${FX(tf(nullV) + 1.96 * seY)},${FY(seY)}"/>`;
+  fs += `<line class="pooled-line" x1="${FX(tf(a.pooled_point))}" y1="${FY(0)}" x2="${FX(tf(a.pooled_point))}" y2="${FY(seY)}"/>`;
+  fs += `<line class="ref-line" x1="${fm + flw}" y1="${FY(seY)}" x2="${fw - fvw}" y2="${FY(seY)}"/>`;
   for (const r of rows) {
-    svg += `<text class="study-label" x="${labelW - 12}" y="${y}" text-anchor="end">[${r.ref}] ${esc(trunc(r.title))}</text>`;
-    svg += `<line class="ci-line" x1="${X(r.lo)}" y1="${y - 4}" x2="${X(r.hi)}" y2="${y - 4}"/>`;
-    svg += `<rect class="study-marker" x="${X(r.y) - 4}" y="${y - 8}" width="8" height="8" rx="1.5"/>`;
-    svg += `<text class="val-label" x="${labelW + (W - labelW - valW) + 12}" y="${y}">${f3(r.disp.point)} [${f3(r.disp.lo)}, ${f3(r.disp.hi)}] · ${r.wpct}%</text>`;
-    y += rowH;
+    fs += `<rect class="study-dot" x="${FX(tf(r.point)) - 3.5}" y="${FY(r.se) - 3.5}" width="7" height="7" rx="1.5"/>`;
+    fs += `<text class="axis-label" x="${FX(tf(r.point))}" y="${FY(r.se) + 14}" text-anchor="middle">[${r.ref}]</text>`;
   }
-  y += 4;
-  svg += `<line class="pooled-row-line" x1="8" y1="${y - 12}" x2="${W - 8}" y2="${y - 12}"/>`;
-  for (const dm of diamonds) {
-    const cx = X(dm.y), xl = X(dm.lo), xh = X(dm.hi), h = 9;
-    svg += `<polygon class="${dm.cls}" points="${xl},${y - 4} ${cx},${y - 4 - h} ${xh},${y - 4} ${cx},${y - 4 + h}"/>`;
-    svg += `<text class="pooled-label" x="${labelW - 12}" y="${y}" text-anchor="end">${dm.label}</text>`;
-    svg += `<text class="val-label" x="${labelW + (W - labelW - valW) + 12}" y="${y}" style="font-weight:700;fill:var(--ink)">${f3(fb(dm.y))} [${f3(fb(dm.lo))}, ${f3(fb(dm.hi))}]</text>`;
-    y += rowH;
+  for (const frac of [0.15, 0.5, 0.85]) {
+    const v = fxLo + (fxHi - fxLo) * frac;
+    fs += `<text class="axis-label" x="${FX(v)}" y="${fH - 6}" text-anchor="middle">${f3(fb(v))}</text>`;
   }
-  svg += `</svg>`;
+  fs += `<text class="axis-label" x="${FX(tf(nullV))}" y="12" text-anchor="middle">null = ${nullV}</text>`;
+  fs += `</svg>`;
+  const funnelCard = `<div class="card"><h3>Funnel plot — publication bias check</h3>
+    <div class="forest-wrap">${fs}</div>
+    <div class="ea-verdict">${a.egger ?
+      `Egger's regression test: intercept = ${esc(String(a.egger.intercept))}, p = ${esc(String(a.egger.p_value))} (k = ${a.egger.n}) — ` +
+      (a.egger.asymmetry
+        ? `<b class="asym">funnel asymmetry detected — small-study effects possible; treat the pooled estimate as provisional.</b>`
+        : `<b class="sig">no evidence of small-study effects.</b>`)
+      : `Too few studies (&lt;3) for Egger's test — interpret funnel symmetry visually.`}</div></div>`;
 
-  const header = `<div class="forest-header">
-      <span class="mchip">${ratio ? "ratio measures · log scale" : "mean differences · linear scale"}</span>
-      <span class="mchip">I² = ${a.I2}%</span>
-      <span class="mchip">model: ${esc(a.model)}</span>
-      <span class="mchip">marker size ∝ study weight</span>
-    </div>`;
-  return `<div class="card"><h3>Forest plot — ${rows.length} study effect estimates</h3>
-    ${header}<div class="forest-wrap">${svg}</div></div>`;
+  // ---- leave-one-out influence analysis ------------------------------------
+  const loo = a.leave_one_out || [];
+  let looCard = "";
+  if (loo.length) {
+    const overallSig = !!(a.ci_lo > nullV || a.ci_hi < nullV);
+    const lRows = loo.map(r => ({ ...r, lo: tf(r.ci_lo), hi: tf(r.ci_hi), y: tf(r.point) }))
+                     .sort((p, q) => p.y - q.y);
+    let lLo = Math.min(...lRows.map(r => r.lo), tf(a.pooled_point));
+    let lHi = Math.max(...lRows.map(r => r.hi), tf(a.pooled_point));
+    const lpad = (lHi - lLo) * 0.1 || 0.1; lLo -= lpad; lHi += lpad;
+    const LW = 700, LL = 170, LV = 150, rowH = 26;
+    const LH = 24 + rowH * lRows.length + 30;
+    const LX = v => LL + ((v - lLo) / (lHi - lLo)) * (LW - LL - LV);
+    let ls = `<svg class="ea-plot" viewBox="0 0 ${LW} ${LH}" width="100%" style="min-width:560px">`;
+    ls += `<line class="ref-line" x1="${LX(tf(nullV))}" y1="14" x2="${LX(tf(nullV))}" y2="${LH - 24}"/>`;
+    ls += `<line class="pooled-line" x1="${LX(tf(a.pooled_point))}" y1="14" x2="${LX(tf(a.pooled_point))}" y2="${LH - 24}"/>`;
+    ls += `<text class="axis-label" x="${LX(tf(nullV))}" y="${LH - 8}" text-anchor="middle">no effect</text>`;
+    ls += `<text class="axis-label" x="${LX(tf(a.pooled_point))}" y="10" text-anchor="middle">all studies: ${f3(a.pooled_point)}</text>`;
+    lRows.forEach((r, i) => {
+      const y = 30 + i * rowH;
+      const flips = overallSig !== (r.ci_lo > nullV || r.ci_hi < nullV);
+      const rid = d.papers.findIndex(p => p.id === r.excluded_paper_id) + 1;
+      ls += `<text class="study-label" x="${LL - 10}" y="${y + 4}" text-anchor="end">without [${rid}]</text>`;
+      ls += `<line class="loo-line" x1="${LX(r.lo)}" y1="${y}" x2="${LX(r.hi)}" y2="${y}"/>`;
+      ls += `<rect class="loo-dot" x="${LX(r.y) - 3}" y="${y - 3}" width="6" height="6"/>`;
+      ls += `<text class="val-label" x="${LW - LV + 16}" y="${y + 4}">${f3(r.point)} [${f3(r.ci_lo)}, ${f3(r.ci_hi)}]</text>`;
+      if (flips) ls += `<text class="flip" x="${LW - LV + 16}" y="${y + 16}">flips significance</text>`;
+    });
+    ls += `</svg>`;
+    const flips = lRows.filter(r => overallSig !== (r.ci_lo > nullV || r.ci_hi < nullV)).length;
+    const verdict = flips
+      ? `<b class="asym">${flips} exclusion${flips > 1 ? "s" : ""} change the significance</b> — the result depends on those studies; name them in the limitations.`
+      : `<b class="sig">No single study changes the conclusion</b> — the result is robust to any one exclusion.`;
+    looCard = `<div class="card"><h3>Leave-one-out sensitivity — influence of each study</h3>
+      <div class="forest-wrap">${ls}</div>
+      <div class="ea-verdict">${verdict}</div></div>`;
+  }
+
+  return funnelCard + looCard;
 }
 
 function prismaFlowSVG(f) {
   // PRISMA 2020-style flow: main column (x 20..400) + exclusion side column
-  // (x 460..690). Heights are computed from content so nothing overlaps.
+  // (x 455..705). Heights are computed from content so nothing overlaps.
   const mainX = 20, mainW = 380, sideX = 455, sideW = 250;
   const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
   const P = [];
   let yy = 10;
 
-  // row 1: identification (+ "not retrieved" side box when a source failed)
   const idLines = chunk(f.identified.map(x => `${x.database}: ${x.n}`), 3);
   const hId = 34 + idLines.length * 15;
   P.push(`<rect class="flow-box" x="${mainX}" y="${yy}" width="${mainW}" height="${hId}" rx="9"/>`);
@@ -772,7 +770,6 @@ function prismaFlowSVG(f) {
   }
   yy += hId;
 
-  // rows with optional exclusion side boxes
   const row = (title, sub, side) => {
     yy += 36;
     P.push(`<line class="flow-arrow" x1="${mainX + mainW / 2}" y1="${yy - 32}" x2="${mainX + mainW / 2}" y2="${yy}"/>`);
@@ -801,6 +798,7 @@ function reviewCard(d) {
   const r = d.review;
   if (!r) return "";
   const f = r.prisma;
+  const flowSvg = prismaFlowSVG(f);
   const mdBtn = `<button class="btn" style="padding:5px 12px;font-size:12px"
       onclick="downloadReview()">download .md manuscript</button>`;
 
@@ -826,7 +824,7 @@ function reviewCard(d) {
          (95% CI ${esc(String(r.results.synthesis.ci_lo))} to ${esc(String(r.results.synthesis.ci_hi))}),
          ${esc(r.results.synthesis.model)} model, k=${esc(String(r.results.synthesis.k))},
          I²=${esc(String(r.results.synthesis.I2))}%, τ²=${esc(String(r.results.synthesis.tau2))}.
-         A fixed-effect sensitivity anchor is reported in the forest plot.</div>`
+         A fixed-effect sensitivity anchor is reported in the Evidence analysis tab.</div>`
       : `<div class="review-p">${esc(r.results.narrative)}</div>`);
 
   const refsHtml = `<div class="review-sec">References</div>` +
@@ -835,6 +833,14 @@ function reviewCard(d) {
       const link = href ? `<a class="plink" href="${href}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title);
       return `<li>${link} <span class="srcb">${esc(x.source)}</span> <span class="cite-n">${esc(x.id)}</span></li>`;
     }).join("") + `</ol>`;
+
+  const keyPointsHtml = `<div class="review-sec">Key points</div>` +
+    ((r.results.key_points || []).map(h => {
+      const href = citeLink(h.id);
+      const t = href ? `<a class="plink" href="${href}" target="_blank" rel="noopener">${esc(h.title)}</a>` : esc(h.title);
+      return `<div class="outline-h">[${h.ref}] ${t}</div>` +
+        h.highlights.map(b => `<div class="outline-b">• ${esc(b)}</div>`).join("");
+    }).join(""));
 
   return `<div class="card">
     <p class="review-title">${esc(r.title)}</p>
@@ -846,9 +852,10 @@ function reviewCard(d) {
     <div class="review-sub">Results</div><div class="review-p">${esc(r.abstract.results)}</div>
     <div class="review-sub">Conclusions</div><div class="review-p">${esc(r.abstract.conclusions)}</div>
     <div class="review-sec">PRISMA flow</div>
-    <div class="forest-wrap">${prismaFlowSVG(f)}</div>
+    <div class="forest-wrap">${flowSvg}</div>
     ${methodsHtml}
     ${resultsHtml}
+    ${keyPointsHtml}
     <div class="review-sec">Discussion</div>
     ${r.discussion.map(x => `<div class="review-p">• ${esc(x)}</div>`).join("")}
     <div class="review-sec">Limitations</div>
@@ -892,6 +899,11 @@ function downloadReview() {
   } else if (r.results.narrative) {
     L.push("", "### Synthesis", "", r.results.narrative);
   }
+  L.push("", "## Key points");
+  (r.results.key_points || []).forEach(h => {
+    L.push("", "**[" + h.ref + "] " + h.title + "**");
+    h.highlights.forEach(b => L.push("- " + b));
+  });
   L.push("", "## Discussion");
   r.discussion.forEach(x => L.push("- " + x));
   L.push("", "## Limitations");
@@ -902,6 +914,18 @@ function downloadReview() {
   a.href = URL.createObjectURL(new Blob([L.join("\n")], {type:"text/markdown"}));
   a.download = "review-" + (lastDetail ? lastDetail.run_id : "run") + ".md";
   a.click();
+}
+
+function highlightsCard(d) {
+  const hl = (d.synthesis || {}).highlights;
+  if (!hl || !hl.length) return "";
+  return `<div class="card"><h3>Key highlights — each paper, bullet by bullet</h3>` +
+    hl.map(h => {
+      const href = citeLink(h.id);
+      const t = href ? `<a class="plink" href="${href}" target="_blank" rel="noopener">${esc(h.title)}</a>` : esc(h.title);
+      return `<div class="outline-h">[${h.ref}] ${t} <span class="srcb">${esc(h.source)}</span></div>` +
+        h.highlights.map(b => `<div class="outline-b">• ${linkifyRefs(b, d.papers)}</div>`).join("");
+    }).join("") + `</div>`;
 }
 
 function overviewCard(d) {
@@ -993,13 +1017,13 @@ function renderDetail(d) {
       <div><h3>Working…</h3>retrieving and extracting evidence</div></div></div>`;
   }
 
-  const hasForest = (d.evidence || []).length > 0 && !!d.analysis;
-  let viewTab = (curTab === "forest" && !hasForest) ? "overview" : curTab;
+  const hasEA = (d.evidence || []).length > 0 && !!d.analysis;
+  let viewTab = (curTab === "evidence" && !hasEA) ? "overview" : curTab;
   if (viewTab === "review" && !d.review) viewTab = "overview";
   const tabDefs = [["overview", "Overview"]];
-  if (hasForest) tabDefs.push(["forest", `Forest plot (${d.evidence.length})`]);
+  if (hasEA) tabDefs.push(["evidence", `Evidence analysis (${d.evidence.length})`]);
   tabDefs.push(["papers", `Papers (${d.papers.length})`], ["audit", `Audit log (${d.events.length})`]);
-  if (d.review) tabDefs.splice(hasForest ? 2 : 1, 0, ["review", "Review article"]);
+  if (d.review) tabDefs.splice(hasEA ? 2 : 1, 0, ["review", "Review article"]);
   const tabs = `
     <div class="tabs">
       ${tabDefs.map(([t, label]) =>
@@ -1011,8 +1035,8 @@ function renderDetail(d) {
     tabBody = d.papers.length ? `<div class="card"><table>
       <tr><th style="width:230px">Paper (click to read)</th><th>Title & abstract</th></tr>
       ${d.papers.map(p => `<tr>
-        <td class="k">${paperLink(p.id, p.id)}<br><span class="srcb">${esc(p.source)}</span></td>
-        <td>${paperLink(p.id, p.title || p.id)}
+        <td class="k">${paperLink(p.id, p.id, p.url)}<br><span class="srcb">${esc(p.source)}</span></td>
+        <td>${paperLink(p.id, p.title || p.id, p.url)}
             ${p.abstract_snippet ? `<div class="snippet">“${esc(p.abstract_snippet)}…”</div>` : ""}</td></tr>`).join("")}
       </table></div>`
       : `<div class="card"><div class="hint">No paper list recorded for this run yet.</div></div>`;
@@ -1050,8 +1074,8 @@ function renderDetail(d) {
               onclick="delClick(event,'${d.run_id}')">${confirmDel && confirmDel.id === d.run_id && Date.now() - confirmDel.at < 4000 ? "Confirm delete?" : TRASH + "Delete run"}</button>
     </div>
     ${stepper}
-    ${viewTab === "overview" ? body + synthesisCards(d) + overviewCard(d) : ""}
-    ${viewTab === "forest" ? forestCard(d) : ""}
+    ${viewTab === "overview" ? body + synthesisCards(d) + highlightsCard(d) + overviewCard(d) : ""}
+    ${viewTab === "evidence" ? evidenceAnalysisCard(d) : ""}
     ${viewTab === "review" ? reviewCard(d) : ""}
     ${tabs}
     ${tabBody}`;

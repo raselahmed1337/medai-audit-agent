@@ -8,6 +8,7 @@ the console renders).
 """
 from __future__ import annotations
 
+import re
 import time
 
 _MEASURE_LABEL = {"hr": "HR", "or": "OR", "rr": "RR", "md": "MD"}
@@ -189,5 +190,78 @@ def build_synthesis(query: str, papers: list[dict], evidence: list[dict],
         ],
     })
 
+    highlights = build_highlights(papers, evidence)
     return {"abstract": abstract, "abstract_sections": abstract_sections,
-            "outline": outline, "most_relevant": ranked[:5]}
+            "outline": outline, "most_relevant": ranked[:5],
+            "highlights": highlights}
+
+
+# ---- key highlights: per-paper bullet mining ------------------------------
+_DESIGN_RE = re.compile(
+    r"randomi[sz]ed|double[- ]blind|placebo\b|prospective|retrospective|cohort|"
+    r"case[- ]control|meta[- ]analysis|systematic review|observational|open[- ]label", re.I)
+_SAMPLE_RE = re.compile(
+    r"\b\d[\d,]{2,}\s*(?:patients|participants|subjects|individuals|people|men|women|"
+    r"cases|physicians|adults|adolescents)\b|\bn\s*=\s*\d+", re.I)
+_CONCL_RE = re.compile(
+    r"we conclude|in conclusion|these (?:findings|results) (?:suggest|demonstrate|"
+    r"indicate|support)|suggest(?:s|ing) that|demonstrat(?:e|es|ed) that", re.I)
+
+
+def _sig_phrase(e: dict) -> str:
+    """Academic significance phrasing from the CI's position vs the null."""
+    if e["measure"] == "md":
+        if e["hi"] < 0: return "statistically significant decrease"
+        if e["lo"] > 0: return "statistically significant increase"
+    else:
+        if e["hi"] < 1: return "statistically significant reduction"
+        if e["lo"] > 1: return "statistically significant increase"
+    return "not statistically significant (CI crosses the null)"
+
+
+def build_highlights(papers: list[dict], evidence: list[dict],
+                     max_bullets: int = 4) -> list[dict]:
+    """Per-paper key highlights, one bullet at a time. Bullet 1 is always the
+    provenance-bound effect estimate with an academic significance reading
+    (when present); further bullets mine design/population and conclusion
+    sentences from the abstract. Fully deterministic and auditable."""
+    from medai.tools.extraction import split_sentences
+    eff_by_paper: dict[str, list[dict]] = {}
+    for e in evidence:
+        eff_by_paper.setdefault(e["paper_id"], []).append(e)
+
+    out = []
+    for i, p in enumerate(papers, 1):
+        sentences = split_sentences(p.get("abstract", ""))
+        bullets: list[str] = []
+        span_text = ""
+        for e in eff_by_paper.get(p["id"], []):
+            span_text += " " + e.get("span", "")
+            bullets.append(f"Key result: {_fmt_effect(e)} — {_sig_phrase(e)}. "
+                           f"Verbatim: “{e.get('span', '')}”")
+        scored = []
+        for j, sent in enumerate(sentences):
+            if sent in span_text:
+                continue  # already reported as the key result
+            score = 0
+            if _DESIGN_RE.search(sent): score += 2
+            if _SAMPLE_RE.search(sent): score += 2
+            if _CONCL_RE.search(sent): score += 2
+            if j == 0: score += 1
+            if score > 0:
+                scored.append((score, j, sent))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        for _score, _j, sent in scored:
+            if len(bullets) >= max_bullets:
+                break
+            lead = "Authors' conclusion: " if _CONCL_RE.search(sent) else "Detail: "
+            bullets.append(lead + (sent if len(sent) <= 220 else sent[:217] + "…"))
+        if not bullets and sentences:
+            bullets.append("Context: " + (sentences[0] if len(sentences[0]) <= 220
+                                          else sentences[0][:217] + "…"))
+        if p.get("source") == "arxiv":
+            bullets.append("Preprint (arXiv) — not peer-reviewed.")
+        out.append({"ref": i, "id": p["id"], "title": p.get("title", ""),
+                    "source": p.get("source", ""),
+                    "highlights": bullets[:max_bullets + 2]})
+    return out

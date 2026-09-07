@@ -700,3 +700,49 @@ def test_abstract_follows_journal_structured_format():
     assert "interpreted as exploratory" in conclusions   # hedged academic claim
     methods = s["abstract_sections"][2]["text"]
     assert "human approval" in methods                   # approval statement in methods
+
+
+def test_key_highlights_per_paper():
+    from medai.synthesis import build_highlights
+    papers = [
+        dict(id="A", title="Trial", source="pubmed",
+             abstract="Background on x. We randomized 4,200 patients to x or placebo. "
+                      "X reduced outcomes (risk ratio 0.56, 95% CI 0.45 to 0.70). "
+                      "We conclude x should be used."),
+        dict(id="B", title="Preprint", source="arxiv",
+             abstract="An agentic triage system."),
+    ]
+    evidence = [dict(paper_id="A", measure="rr", point=0.56, lo=0.45, hi=0.70,
+                     span="X reduced outcomes (risk ratio 0.56, 95% CI 0.45 to 0.70).")]
+    hl = build_highlights(papers, evidence)
+    assert hl[0]["ref"] == 1 and hl[1]["ref"] == 2
+    b0 = hl[0]["highlights"]
+    assert any("Key result" in b and "statistically significant reduction" in b
+               for b in b0), b0
+    assert any("randomized" in b for b in b0)
+    assert any("conclusion" in b.lower() for b in b0)
+    assert any("Preprint" in b for b in hl[1]["highlights"])
+
+
+def test_egger_and_leave_one_out_math():
+    from medai.tools.analysis import egger_test, leave_one_out
+    # symmetric: all studies estimate the same effect -> intercept 0, no asymmetry
+    sym = [dict(paper_id=f"S{i}", measure="rr", y=-0.5, se=0.05 * ((i % 3) + 1))
+           for i in range(6)]
+    r = egger_test(sym)
+    assert abs(r["intercept"]) < 0.01 and r["p_value"] > 0.05 and not r["asymmetry"]
+    # small studies reporting inflated effects -> positive slope, asymmetry flagged
+    asy = sym + [dict(paper_id="S9", measure="rr", y=2.0, se=0.6)]
+    r2 = egger_test(asy)
+    assert r2["asymmetry"] and r2["p_value"] < r["p_value"]  # asymmetry detected
+    assert r2["slope"] != r["slope"]  # small-study deviation shifts the slope
+    assert egger_test(sym[:2]) is None  # k < 3 -> insufficient
+
+    # leave-one-out: equal weights, hand-computed (point 2.5, half-width 0.1386)
+    import math
+    effs = [dict(paper_id=f"S{i}", measure="md", y=float(i), se=0.1) for i in (1, 2, 3)]
+    lo = leave_one_out(effs)
+    assert len(lo) == 3
+    row = next(x for x in lo if x["excluded_paper_id"] == "S1")
+    assert abs(row["point"] - 2.5) < 1e-6
+    assert abs(row["ci_lo"] - (2.5 - 1.96 * math.sqrt(1 / 200))) < 1e-4  # API rounds to 4dp

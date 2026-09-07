@@ -118,9 +118,11 @@ def build_review(query: str, papers: list[dict], evidence: list[dict],
             "source": _SOURCE_NAMES.get(p.get("source", ""), p.get("source", "")),
             "effect": effs or None,
         })
+    from medai.synthesis import build_highlights
     results = {
         "prisma": flow,
         "study_characteristics": characteristics,
+        "key_points": build_highlights(papers, evidence),
         "synthesis": (analysis or None),
         "narrative": (None if analysis else
                       "No pooled estimate was computed: none of the included abstracts "

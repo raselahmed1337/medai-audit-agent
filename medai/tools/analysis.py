@@ -109,3 +109,55 @@ def valid_analysis(result) -> bool:
 # back-compat alias for callers that specifically want the fixed-effect model
 def meta_analysis_fixed(effects: list[dict]) -> dict:
     return meta_analysis(effects, model="fixed")
+
+
+def egger_test(effects: list[dict]) -> dict | None:
+    """Egger's regression for funnel-plot asymmetry (small-study effects).
+
+    Regresses the standard normal deviate (y/se) on precision (1/se): a slope
+    significantly different from zero indicates asymmetry, i.e. possible
+    publication bias. Returns None with fewer than 3 studies. The two-sided
+    p-value uses a normal approximation (adequate for k >= 5; interpret
+    cautiously for k = 3-4)."""
+    k = len(effects)
+    if k < 3:
+        return None
+    z = [e["y"] / e["se"] for e in effects]
+    prec = [1.0 / e["se"] for e in effects]
+    n = float(k)
+    mx, mz = sum(prec) / n, sum(z) / n
+    sxx = sum((p - mx) ** 2 for p in prec)
+    if sxx <= 0:
+        return None
+    sxy = sum((p - mx) * (zi - mz) for p, zi in zip(prec, z))
+    slope = sxy / sxx
+    intercept = mz - slope * mx
+    sse = sum((zi - (intercept + slope * p)) ** 2 for p, zi in zip(prec, z))
+    se_slope = sqrt(max(sse / (n - 2.0), 0.0) / sxx)
+    t_stat = slope / se_slope if se_slope > 0 else 0.0
+    p_val = min(1.0, 2.0 * _norm_sf(abs(t_stat)))
+    return {"intercept": round(intercept, 4), "slope": round(slope, 4),
+            "se_slope": round(se_slope, 4), "t": round(t_stat, 4),
+            "p_value": round(p_val, 5), "n": k,
+            "asymmetry": bool(p_val < 0.05)}
+
+
+def leave_one_out(effects: list[dict]) -> list[dict]:
+    """Influence analysis: the pooled estimate excluding each study in turn
+    (fixed-effect inverse variance). Values are on the display scale
+    (ratios exponentiated). A row whose CI changes significance vs the
+    full-cohort result flags an influential study."""
+    ratio = {e["measure"] for e in effects} <= {"rr", "or", "hr"}
+    scale = (lambda v: exp(v)) if ratio else (lambda v: v)
+    out = []
+    for i, e in enumerate(effects):
+        rest = [x for j, x in enumerate(effects) if j != i]
+        if not rest:
+            continue
+        y, se = _fixed(rest)
+        out.append({"excluded_paper_id": e["paper_id"],
+                    "point": round(scale(y), 4),
+                    "ci_lo": round(scale(y - 1.96 * se), 4),
+                    "ci_hi": round(scale(y + 1.96 * se), 4),
+                    "k": len(rest)})
+    return out

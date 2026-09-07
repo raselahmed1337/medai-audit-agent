@@ -258,6 +258,7 @@ def get_run(run_id: str):
         "citations": h.state.get("citations", []),
         "papers": [{"id": p["id"], "title": p.get("title", ""),
                     "source": p.get("source", "fixture"),
+                    "url": p.get("url") or None,
                     "abstract_snippet": (p.get("abstract", "") or "")[:240]}
                    for p in h.state.get("papers", [])],
         "evidence": [{"paper_id": e["paper_id"], "measure": e["measure"],
@@ -308,7 +309,10 @@ def health():
 
 @app.get("/")
 def index():
-    return FileResponse(WEB_DIR / "index.html")
+    # no-store: the console is served fresh on every load, so UI updates and
+    # rebuilds can never be shadowed by a stale browser cache
+    return FileResponse(WEB_DIR / "index.html",
+                        headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 if __name__ == "__main__":

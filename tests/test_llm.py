@@ -268,3 +268,42 @@ def test_screening_sanity_bound_blocks_mass_exclusion(monkeypatch, tmp_path):
     fb = [e for e in audit.events if e["kind"] == "llm_fallback" and e.get("node") == "screen"]
     assert fb and "implausible exclusion rate" in fb[0].get("reason", "")
     assert audit.verify_chain()
+
+
+def test_google_scholar_parsing_and_gating(monkeypatch, tmp_path):
+    import medai.tools.retrieval as R
+    serper = {"organic": [
+        {"title": "Agentic AI for <b>clinical</b> triage",
+         "link": "https://doi.org/10.1001/jama.2024.1",
+         "snippet": "We evaluated an agentic system in a clinical setting."},
+        {"title": "Landing page paper",
+         "link": "https://example.com/paper123",
+         "snippet": "A study snippet."},
+        {"title": "No link entry", "snippet": "orphan"}]}
+
+    import urllib.request
+    class FakeResp:
+        def __init__(self, payload): self.payload = payload
+        def read(self): return json.dumps(self.payload).encode()
+    def fake_urlopen(req, timeout=0):
+        u = req.full_url if hasattr(req, "full_url") else str(req)
+        if "serper" in u:
+            hdrs = {k.lower(): v for k, v in req.headers.items()}
+            assert hdrs.get("x-api-key") == "k"
+            return FakeResp(serper)
+        raise AssertionError("unexpected call: " + u)
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setenv("SERPER_API_KEY", "k")
+
+    srcs = R.available_sources()
+    assert "google_scholar" in srcs
+    papers = R._google_scholar_search("agentic ai triage", 10)
+    assert len(papers) == 2  # no-link entry skipped
+    assert papers[0]["id"] == "DOI:10.1001/jama.2024.1"  # doi.org link -> DOI id
+    assert papers[0]["source"] == "google_scholar"
+    assert papers[1]["id"].startswith("GS:")
+    assert papers[1]["url"] == "https://example.com/paper123"
+
+    # gating: without the key the source disappears from the fan-out
+    monkeypatch.delenv("SERPER_API_KEY")
+    assert "google_scholar" not in R.available_sources()

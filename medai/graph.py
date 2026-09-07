@@ -29,12 +29,13 @@ from medai.llm_nodes import (llm_extract_effects,  # noqa: E402
                                llm_rewrite_abstract, llm_screen_papers)
 from medai.review import build_review
 from medai.synthesis import build_synthesis
-from medai.tools.analysis import meta_analysis, valid_analysis
+from medai.tools.analysis import (egger_test, leave_one_out,  # noqa: E402
+                                  meta_analysis, valid_analysis)
 from medai.tools.extraction import extract_evidence, valid_evidence
 from medai.tools.guard import ToolError, ToolGuard
-from medai.tools.retrieval import (DEFAULT_LIVE_SOURCES, _arxiv_search,  # noqa: E402
-                                   _fixture_search, _ieee_search,
-                                   _openalex_search, _pubmed_search,
+from medai.tools.retrieval import (available_sources, _arxiv_search,  # noqa: E402
+                                   _fixture_search, _google_scholar_search,
+                                   _ieee_search, _openalex_search, _pubmed_search,
                                    _scopus_search, _semantic_scholar_search,
                                    available_sources, infer_topic_keywords,
                                    merge_sources, pubmed_effective_query,
@@ -73,13 +74,15 @@ def build_toolchain(failure_rate: float = 0.0, fault_type: str = "mixed",
         "search_corpus": guarded("search_corpus", _fixture_search, valid_paper_list, 0),
         "search_pubmed": guarded("search_pubmed", _pubmed_search, valid_paper_list, 1),
         "search_openalex": guarded("search_openalex", _openalex_search, valid_paper_list, 2),
-        "search_arxiv": guarded("search_arxiv", _arxiv_search, valid_paper_list, 3),
-        "search_scopus": guarded("search_scopus", _scopus_search, valid_paper_list, 4),
-        "search_ieee": guarded("search_ieee", _ieee_search, valid_paper_list, 5),
+        "search_google_scholar": guarded("search_google_scholar", _google_scholar_search,
+                                         valid_paper_list, 3),
+        "search_arxiv": guarded("search_arxiv", _arxiv_search, valid_paper_list, 4),
+        "search_scopus": guarded("search_scopus", _scopus_search, valid_paper_list, 5),
+        "search_ieee": guarded("search_ieee", _ieee_search, valid_paper_list, 6),
         "search_semantic_scholar": guarded("search_semantic_scholar",
-                                           _semantic_scholar_search, valid_paper_list, 6),
-        "extract_evidence": guarded("extract_evidence", extract_evidence, valid_evidence, 7),
-        "run_meta_analysis": guarded("run_meta_analysis", meta_analysis, valid_analysis, 8),
+                                           _semantic_scholar_search, valid_paper_list, 7),
+        "extract_evidence": guarded("extract_evidence", extract_evidence, valid_evidence, 8),
+        "run_meta_analysis": guarded("run_meta_analysis", meta_analysis, valid_analysis, 9),
     }
 
 
@@ -122,8 +125,8 @@ def _merge(state: ResearchState, tools) -> dict:
     attempted = {r["source"] for r in results} | failed
     identified = {r["source"]: len(r["papers"]) for r in results}
     raw_total = sum(identified.values())
-    order = [s for s in ["corpus", "pubmed", "scopus", "openalex", "arxiv",
-                         "semantic_scholar", "ieee"]
+    order = [s for s in ["corpus", "pubmed", "scopus", "openalex", "google_scholar",
+                         "arxiv", "semantic_scholar", "ieee"]
              if s in {r["source"] for r in results}]
     merged_raw = merge_sources([r["papers"] for r in results if r["papers"]],
                                state.get("max_results", 10), priority=order)
@@ -241,6 +244,9 @@ def _analyze(state: ResearchState, tools) -> dict:
     except ToolError as e:
         return {"status": "failed:run_meta_analysis",
                 "audit_events": [audit.record("node_failure", node="analyze", error=str(e))]}
+    # influence + bias diagnostics are part of the analysis record
+    analysis["egger"] = egger_test(state.get("evidence", []))
+    analysis["leave_one_out"] = leave_one_out(state.get("evidence", []))
     return {"analysis": analysis}
 
 
@@ -302,6 +308,8 @@ def _write_review(state: ResearchState, audit: AuditLog) -> dict:
             search_strategy["Scopus"] = state["query"]
         if "openalex" in srcs:
             search_strategy["OpenAlex"] = state["query"]
+        if "google_scholar" in srcs:
+            search_strategy["Google Scholar (via Serper)"] = state["query"]
         if "arxiv" in srcs:
             search_strategy["arXiv"] = " AND ".join(
                 f"all:{t}" for t in state["query"].lower().split() if len(t) > 1)

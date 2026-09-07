@@ -6,6 +6,7 @@ so live papers carry real abstract text that the evidence extractor can parse.
 """
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import os
@@ -24,6 +25,7 @@ SEMANTIC_SCHOLAR = "https://api.semanticscholar.org/graph/v1/paper/search"
 ARXIV_API = "https://export.arxiv.org/api/query"
 SCOPUS_API = "https://api.elsevier.com/content/search/scopus"
 IEEE_API = "https://ieeexploreapi.ieee.org/api/v1/search/articles"
+SERPER_SCHOLAR = "https://google.serper.dev/scholar"  # licensed Google Scholar access
 OPENALEX_MAILTO = "medai-agent@example.org"  # OpenAlex polite pool
 
 # Live sources, queried in order. Google Scholar itself has no API and forbids
@@ -31,9 +33,10 @@ OPENALEX_MAILTO = "medai-agent@example.org"  # OpenAlex polite pool
 # (~250M works), Semantic Scholar, and arXiv (preprints). Scopus and IEEE
 # Xplore are key-gated: they join the fan-out only when SCOPUS_API_KEY /
 # IEEE_API_KEY are configured.
-DEFAULT_LIVE_SOURCES = ("pubmed", "scopus", "openalex", "arxiv",
-                        "semantic_scholar", "ieee")
-KEYED_SOURCES = {"scopus": "SCOPUS_API_KEY", "ieee": "IEEE_API_KEY"}
+DEFAULT_LIVE_SOURCES = ("pubmed", "scopus", "openalex", "google_scholar",
+                        "arxiv", "semantic_scholar", "ieee")
+KEYED_SOURCES = {"scopus": "SCOPUS_API_KEY", "ieee": "IEEE_API_KEY",
+                 "google_scholar": "SERPER_API_KEY"}
 
 
 def available_sources() -> tuple[str, ...]:
@@ -90,7 +93,7 @@ def expand_terms(tokens: list[str]) -> list[tuple[str, float]]:
 
 
 SOURCE_PRIORITY = {"corpus": 0, "pubmed": 1, "scopus": 2, "openalex": 3,
-                   "arxiv": 4, "semantic_scholar": 5, "ieee": 6}
+                   "google_scholar": 4, "arxiv": 5, "semantic_scholar": 6, "ieee": 7}
 
 
 def merge_sources(paper_lists: list[list[dict]], cap: int,
@@ -142,6 +145,8 @@ def search_papers(query: str, max_results: int = 10, live: bool = False,
                     papers = _scopus_search(query, max_results)
                 elif src == "openalex":
                     papers = _openalex_search(query, max_results)
+                elif src == "google_scholar":
+                    papers = _google_scholar_search(query, max_results)
                 elif src == "arxiv":
                     papers = _arxiv_search(query, max_results)
                 elif src == "semantic_scholar":
@@ -323,6 +328,34 @@ def _ieee_search(query: str, max_results: int) -> list[dict]:
                                         else "IEEE:" + html_url.rsplit("/", 1)[-1])
         out.append(dict(id=pid, title=_strip_html(a.get("title")),
                         abstract=abstract, doi=doi, source="ieee"))
+    return out
+
+
+def _google_scholar_search(query: str, max_results: int) -> list[dict]:
+    """Google Scholar results via the licensed Serper.dev API (SERPER_API_KEY;
+    free one-time allowance at signup). NOTE: Scholar serves titles + short
+    snippets, not full abstracts — this source is strongest for discovery,
+    coverage and reading links; effect extraction rarely applies to snippets."""
+    key = os.environ.get("SERPER_API_KEY")
+    if not key:
+        raise RuntimeError("SERPER_API_KEY not configured")
+    body = json.dumps({"q": query, "num": min(max_results, 20)}).encode()
+    req = urllib.request.Request(SERPER_SCHOLAR, data=body, method="POST",
+        headers={"X-API-KEY": key, "Content-Type": "application/json"})
+    data = json.load(urllib.request.urlopen(req, timeout=15))
+    out = []
+    for r in (data.get("organic") or [])[:max_results]:
+        link = r.get("link") or ""
+        title = _strip_html(r.get("title"))
+        snippet = _strip_html(r.get("snippet"))
+        if not title or not link:
+            continue
+        m = re.search(r"doi\.org/(10\.\S+)", link)
+        doi = m.group(1).lower() if m else ""
+        gs_id = "GS:" + hashlib.md5(link.encode()).hexdigest()[:10]
+        pid = f"DOI:{doi}" if doi else gs_id
+        out.append(dict(id=pid, title=title, abstract=snippet or title,
+                        doi=doi, source="google_scholar", url=link))
     return out
 
 
